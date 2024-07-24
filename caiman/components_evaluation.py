@@ -6,7 +6,7 @@ import logging
 import numpy as np
 import os
 import peakutils
-import tensorflow as tf
+import torch 
 import scipy
 from scipy.sparse import csc_matrix
 from scipy.stats import norm
@@ -271,12 +271,9 @@ def evaluate_components_CNN(A,
         os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
     try:
         os.environ["KERAS_BACKEND"] = "tensorflow"
-        from tensorflow.keras.models import model_from_json
+        from keras.models import model_load 
         use_keras = True
         logging.info('Using Keras')
-    except (ModuleNotFoundError):
-        use_keras = False
-        logging.info('Using Tensorflow')
 
     if loaded_model is None:
         if use_keras:
@@ -294,15 +291,6 @@ def evaluate_components_CNN(A,
 
             loaded_model = model_from_json(loaded_model_json)
             loaded_model.load_weights(model_name + '.h5')
-        else:
-            if os.path.isfile(os.path.join(caiman_datadir(), model_name + ".h5.pb")):
-                model_file = os.path.join(caiman_datadir(), model_name + ".h5.pb")
-            elif os.path.isfile(model_name + ".h5.pb"):
-                model_file = model_name + ".h5.pb"
-            else:
-                raise FileNotFoundError(f"File for requested model {model_name} not found")
-            print(f"USING MODEL (tensorflow API): {model_file}")
-            loaded_model = caiman.utils.utils.load_graph(model_file)
 
         logging.debug("Loaded model from disk")
 
@@ -318,12 +306,6 @@ def evaluate_components_CNN(A,
     final_crops = np.array([cv2.resize(im / np.linalg.norm(im), (patch_size, patch_size)) for im in crop_imgs])
     if use_keras:
         predictions = loaded_model.predict(final_crops[:, :, :, np.newaxis], batch_size=32, verbose=1)
-    else:
-        tf_in = loaded_model.get_tensor_by_name('prefix/conv2d_20_input:0')
-        tf_out = loaded_model.get_tensor_by_name('prefix/output_node0:0')
-        with tf.Session(graph=loaded_model) as sess:
-            predictions = sess.run(tf_out, feed_dict={tf_in: final_crops[:, :, :, np.newaxis]})
-            sess.close()
 
     return predictions, final_crops
 
