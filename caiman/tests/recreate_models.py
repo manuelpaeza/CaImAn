@@ -12,7 +12,7 @@ use_keras = True
 def recreate_model():
     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
-    model_name = os.path.join(caiman_datadir(), 'model', 'cnn_model_online')
+    model_name = os.path.join(caiman_datadir(), 'model', 'cnn_model')
     if use_keras:
         model_file = model_name + ".json"
         with open(model_file, 'r') as json_file:
@@ -20,11 +20,10 @@ def recreate_model():
             loaded_model_json = json_file.read()
 
         loaded_model = model_from_json(loaded_model_json)
-        loaded_model.load_weights(model_name + '.h5')
+        # loaded_model.summary()
+        # loaded_model.load_weights(model_name + '.h5')
         loaded_model.save(model_name + '.keras')
 
 
 if __name__ == "__main__":
-    import tensorflow as tf
-    print(tf.__version__)
     recreate_model()
