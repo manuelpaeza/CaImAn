@@ -24,8 +24,8 @@ import pickle
 import scipy
 import ssl
 import subprocess
-import tensorflow as tf
 import time
+import torch #Import toch to check for its types
 from scipy.ndimage import gaussian_filter
 from tifffile import TiffFile
 from typing import Any, Union, Iterable
@@ -236,7 +236,6 @@ def get_image_description_SI(fname:str) -> list:
         image_descriptions.append(si_parse(field))
 
     return image_descriptions
-
 
 # Generate data
 def gen_data(dims:tuple[int,int]=(48, 48), N:int=10, sig:tuple[int,int]=(3, 3), tau:float=1., noise:float=.3, T:int=2000,
@@ -474,6 +473,11 @@ def recursively_save_dict_contents_to_group(h5file:h5py.File, path:str, dic:dict
     # save items to the hdf5 file
     for key, item in dic.items():
         key = str(key)
+        #Fix: Add a check to skip non-serializable PyTorch bojects
+        if isinstance(item, torch.device) or isinstance(item, torch.nn.Module):
+            logger.info(f"Skipping key '{key}' or non-serializabel type {type(item)}")
+            continue
+        
         if key == 'g':
             if item is None:
                 item = 0
@@ -485,8 +489,7 @@ def recursively_save_dict_contents_to_group(h5file:h5py.File, path:str, dic:dict
         if key == 'g_tot':
             item = np.asarray(item, dtype=float)
         if key in ['groups', 'idx_tot', 'ind_A', 'Ab_epoch', 'coordinates',
-                   'loaded_model', 'optional_outputs', 'merged_ROIs', 'tf_in',
-                   'tf_out', 'empty_merged']:
+                   'loaded_model', 'optional_outputs', 'merged_ROIs', 'empty_merged']:
             logger.info(f'Key {key} is not saved')
             continue
 
@@ -614,26 +617,6 @@ def parmap(f, X, nprocs=multiprocessing.cpu_count()):
     [p.join() for p in proc]
 
     return [x for i, x in sorted(res)]
-
-def load_graph(frozen_graph_filename):
-    """ Load a tensorflow .pb model and use it for inference"""
-    # We load the protobuf file from the disk and parse it to retrieve the
-    # unserialized graph_def
-    with tf.gfile.GFile(frozen_graph_filename, "rb") as f:
-        graph_def = tf.GraphDef()
-        graph_def.ParseFromString(f.read())
-
-    # Then, we can use again a convenient built-in function to import a
-    # graph_def into the current default Graph
-    with tf.Graph().as_default() as graph:
-        tf.import_graph_def(
-            graph_def,
-            input_map=None,
-            return_elements=None,
-            name="prefix",
-            producer_op_list=None
-        )
-    return graph
 
 def get_caiman_version() -> tuple[str, str]:
     """ Get the version of CaImAn, as best we can determine"""

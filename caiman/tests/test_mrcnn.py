@@ -2,7 +2,6 @@
 
 import numpy as np
 import os
-import tensorflow as tf
 
 import caiman as cm
 from caiman.paths import caiman_datadir
@@ -13,11 +12,10 @@ import caiman.source_extraction.volpy.mrcnn.model as modellib
 # mrcnn disables eager execution during its import, making a lot of later tests unhappy because
 # under nose, all tests run under the same process. Non-eager execution sends modern tensorflow down
 # some rare code paths.
-# It apparently doesn't even need to do this. So let's just undo it immediately
-tf.compat.v1.enable_eager_execution()
 
-def mrcnn(img, size_range, weights_path):
+def mrcnn(img, size_range, weights_path, confidence_threshold):
     config = neurons.NeuronsConfig()
+    
     class InferenceConfig(config.__class__):
         # Run detection on one img at a time
         GPU_COUNT = 1
@@ -30,7 +28,7 @@ def mrcnn(img, size_range, weights_path):
     config = InferenceConfig()
     config.display()
     model_dir = os.path.join(caiman_datadir(), 'model')
-    DEVICE = "/cpu:0"  # /cpu:0 or /gpu:0
+    
     with tf.device(DEVICE):
         model = modellib.MaskRCNN(mode="inference", model_dir=model_dir,
                                   config=config)
@@ -44,10 +42,11 @@ def mrcnn(img, size_range, weights_path):
     return ROIs
 
 def test_mrcnn():
-    weights_path = download_model('mask_rcnn')    
+    weights_path = download_model('mask_rcnn') 
+    print("weights_path", weights_path))   
     summary_images = cm.load(download_demo('demo_voltage_imaging_summary_images.tif'))
-    ROIs = mrcnn(img=summary_images.transpose([1, 2, 0]), size_range=[5, 22],
-                                 weights_path=weights_path)
+    ROIs = mrcnn(img=summary_images.transpose([1, 2, 0]), size_range=[5, 22], 
+            weights_path=weights_path)
     assert ROIs.shape[0] == 14, 'fail to infer correct number of neurons'
     
     

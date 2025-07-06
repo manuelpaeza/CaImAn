@@ -26,7 +26,8 @@ from scipy.sparse import coo_matrix, csc_matrix, spdiags, hstack
 from scipy.stats import norm
 from sklearn.decomposition import NMF
 from sklearn.preprocessing import normalize
-import tensorflow as tf
+import torch
+from torch.utils.data import DataLoader, TensorDataset
 from time import time
 
 import caiman
@@ -38,6 +39,7 @@ from caiman.motion_correction import (motion_correct_iteration_fast,
                                   high_pass_filter_space, sliding_window,
                                   register_translation_3d, apply_shifts_dft)
 import caiman.paths
+from caiman.pytorch_model_arch import PyTorchCNN
 from caiman.source_extraction.cnmf.cnmf import CNMF
 from caiman.source_extraction.cnmf.estimates import Estimates
 from caiman.source_extraction.cnmf.initialization import imblur, initialize_components, hals, downscale
@@ -47,16 +49,16 @@ from caiman.source_extraction.cnmf.pre_processing import get_noise_fft
 from caiman.source_extraction.cnmf.utilities import (update_order, peak_local_max, decimation_matrix,
                         gaussian_filter, uniform_filter)
 import caiman.summary_images
-from caiman.utils.utils import save_dict_to_hdf5, load_dict_from_hdf5, parmap, load_graph
+from caiman.utils.utils import save_dict_to_hdf5, load_dict_from_hdf5, parmap
 from caiman.utils.stats import pd_solve
-from caiman.utils.nn_models import (fit_NL_model, create_LN_model, quantile_loss, rate_scheduler)
+from caiman.utils.nn_models import (fit_model, create_LN_model, quantile_loss, rate_scheduler)
+from caiman.pytorch_model_arch import PyTorchCNN
 
 try:
     cv2.setNumThreads(0)
 except():
     pass
 
-#FIXME ???
 try:
     profile
 except:
@@ -90,16 +92,12 @@ class OnACID(object):
         Args:
             params: CNMFParams
                 CNMFParams object with parameters that are used to perform online motion correction, followed by online CNMF 
-
             estimates: Estimates, optional
                 Estimates object to load an existing model
-
             path: str, optional
                 path to a saved OnACID model hdf5 file on disk
-
             dview:
                 dview instance, multiprocessing object
-
             Ain: csc_matrix, optional
                 binary masked for seeded initialization as a Compressed Sparse Column matrix.
                 To use set ``"init_method"`` to ``"seeded"``
@@ -326,34 +324,13 @@ class OnACID(object):
         if self.params.get('online', 'path_to_model') is None or self.params.get('online', 'sniper_mode') is False:
             loaded_model = None
             self.params.set('online', {'sniper_mode': False})
-            self.tf_in = None
-            self.tf_out = None
         else:
-            try:
-                from tensorflow.keras.models import model_from_json
-                logger.info('Using Keras')
-                use_keras = True
-            except(ModuleNotFoundError):
-                use_keras = False
-                logger.info('Using Tensorflow')
-            if use_keras:
-                path = self.params.get('online', 'path_to_model').split(".")[:-1]
-                json_path = ".".join(path + ["json"])
-                model_path = ".".join(path + ["h5"])
-                json_file = open(json_path, 'r')
-                loaded_model_json = json_file.read()
-                json_file.close()
-                loaded_model = model_from_json(loaded_model_json)
-                loaded_model.load_weights(model_path)
-                self.tf_in = None
-                self.tf_out = None
-            else:
-                path = self.params.get('online', 'path_to_model').split(".")[:-1]
-                model_path = '.'.join(path + ['h5', 'pb'])
-                loaded_model = load_graph(model_path)
-                self.tf_in = loaded_model.get_tensor_by_name('prefix/conv2d_1_input:0')
-                self.tf_out = loaded_model.get_tensor_by_name('prefix/output_node0:0')
-                loaded_model = tf.Session(graph=loaded_model)
+            logger.info('Using Torch')
+            path = self.params.get('online', 'path_to_model').split(".")[:-1]
+            model_path = '.'.join(path + ['pt'])
+            loaded_model = PyTorchCNN()
+            loaded_model.load_state_dict(torch.load(model_path))
+
         self.loaded_model = loaded_model
 
         if self.is1p:
@@ -555,7 +532,6 @@ class OnACID(object):
                 sniper_mode=self.params.get('online', 'sniper_mode'),
                 use_peak_max=self.params.get('online', 'use_peak_max'),
                 mean_buff=self.estimates.mean_buff,
-                tf_in=self.tf_in, tf_out=self.tf_out,
                 ssub_B=ssub_B, W=self.estimates.W if self.is1p else None,
                 b0=self.estimates.b0 if self.is1p else None,
                 corr_img=self.estimates.corr_img if use_corr else None,
@@ -882,14 +858,39 @@ class OnACID(object):
         return self
 
     def initialize_online(self, model_LN=None, T=None):
+        """
+        Initialize the online algorithm
+        """
         logger = logging.getLogger("caiman")
         fls = self.params.get('data', 'fnames')
         opts = self.params.get_group('online')
         Y = caiman.load(fls[0], subindices=slice(0, opts['init_batch'],
                  None), var_name_hdf5=self.params.get('data', 'var_name_hdf5')).astype(np.float32)
+        
         if model_LN is not None:
-            Y = Y - caiman.movie(np.squeeze(model_LN.predict(np.expand_dims(Y, -1))))
+            logger.info("Applying PyTorch Ring-CNN background model to intialization batch")
+            device = getattr(self, 'device', torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+            model_LN.to(device)
+            model_LN.eval()
+
+            ring_cnn_params = self.params.get_group('ring_CNN')
+            batch_size = ring_cnn_params.get('batch_size', 32)
+            background_mov = np.zeros_like(Y, dtype=np.float32)
+
+            with torch.no_grad():
+                for i in range(0, len(Y), batch_size):
+                    #1. Get batch of frames fromt eh caiman movie object
+                    #2. Preprocess for PyTorch model
+                    #3. Predict backgorund
+                    #4. Store result after converting back to numpy and remoivng channel dim
+                    batch_frames = Y[i:i + batch_size] 
+                    batch_tensor = torch.from_numpy(batch_frames).float().unsqueeze(1).to(device)
+                    background_batch = model_LN(batch_tensor)
+                    background_mov[i:i + batch_size] = background_batch.squeeze(1).cpu().numpy()
+
+            Y = Y - caiman.movie(background_mov)
             Y = np.maximum(Y, 0)
+
         # Downsample if needed
         ds_factor = np.maximum(opts['ds_factor'], 1)
         if ds_factor > 1:
@@ -1120,49 +1121,71 @@ class OnACID(object):
         self.t_init = -time()
         fls = self.params.get('data', 'fnames')
         init_batch = self.params.get('online', 'init_batch')
+        model_LN = None
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
         if self.params.get('online', 'ring_CNN'):
-            logger.info('Using Ring CNN model')
+            logger.info('Using PyTorch Ring CNN model on device: {self.device}')
+            cnn_params = self.params.get_group('ring_CNN') 
             gSig = self.params.get('init', 'gSig')[0]
-            width = self.params.get('ring_CNN', 'width')
-            nch = self.params.get('ring_CNN', 'n_channels')
-            if self.params.get('ring_CNN', 'loss_fn') == 'pct':
-                loss_fn = quantile_loss(self.params.get('ring_CNN', 'pct'))
-            else:
-                loss_fn = self.params.get('ring_CNN', 'loss_fn')
-            if self.params.get('ring_CNN', 'lr_scheduler') is None:
+            
+            if cnn_params['lr_scheduler'] is None:
                 sch = None
             else:
-                sch = rate_scheduler(*self.params.get('ring_CNN', 'lr_scheduler'))
+                sch = rate_scheduler(*cnn_params['lr_scheduler'])
+            
             Y = caiman.base.movies.load(fls[0], subindices=slice(init_batch),
                                         var_name_hdf5=self.params.get('data', 'var_name_hdf5'))
-            shape = Y.shape[1:] + (1,)
-            logger.info('Starting background model training.')
-            model_LN = create_LN_model(Y, shape=shape, n_channels=nch,
-                                       lr=self.params.get('ring_CNN', 'lr'), gSig=gSig,
-                                       loss=loss_fn, width=width,
-                                       use_add=self.params.get('ring_CNN', 'use_add'),
-                                       use_bias=self.params.get('ring_CNN', 'use_bias'))
-            if self.params.get('ring_CNN', 'reuse_model'):
-                logger.info('Using existing model from {self.params.get("ring_CNN", "path_to_model")}')
-                model_LN.load_weights(self.params.get('ring_CNN', 'path_to_model'))
+            shape = Y.shape[1:] + (1,)        
+            
+            logger.info('Starting background model training.') 
+            model_LN = create_LN_model(
+                shape=shape, n_channels=cnn_params['n_channels'],
+                gSig=gSig, width=cnn_params['width'],
+                use_add=cnn_params['use_add'],
+                use_bias=cnn_params['use_bias'])
+        
+            # 2. Define the Criterion (Loss Function)
+            if cnn_params.get('loss_fn') == 'pct':
+                criterion = quantile_loss(cnn_params.get('pct', 0.5))
             else:
-                logger.info('Estimating model from scratch, starting training.')
-                model_LN, history, path_to_model = fit_NL_model(model_LN, Y,
-                                                                epochs=self.params.get('ring_CNN', 'max_epochs'),
-                                                                patience=self.params.get('ring_CNN', 'patience'),
-                                                                schedule=sch)
-                logger.info(f'Training complete. Model saved in {path_to_model}.')
+                criterion = torch.nn.MSELoss()
+        
+            # 3. Define the Optimizer
+            optimizer = torch.optim.Adam(model_LN.parameters(), lr=cnn_params['lr'])
+            if cnn_params.get('reuse_model', False) and cnn_params.get('path_to_model'):
+                logger.info('Using existing model from {self.params.get("ring_CNN", "path_to_model")}') 
+                model_LN.load_state_dict(torch.load(self.params.get('ring_CNN', 'path_to_model'), map_location=self.device))
+            else:
+                logger.info('Estimating model from scratch, starting training.') 
+                # 4. Pass model, optimizer, and criterion to the fit function
+                model_LN, history, path_to_model = fit_model(
+                                                     model_LN, Y,
+                                                     optimizer=optimizer,
+                                                     criterion=criterion,
+                                                     epochs=cnn_params.get('max_epochs', 500),
+                                                     patience=cnn_params.get('patience', 5),
+                                                     schedule=sch,
+                                                     device=self.device,
+                                                     batch_size=cnn_params.get('batch_size', 32),
+                                                     val_split=cnn_params.get('val_split', 0.2)
+                                                     )
+                logger.info(f'Training complete. Model saved in {path_to_model}.') 
                 self.params.set('ring_CNN', {'path_to_model': path_to_model})
-        else:
-            model_LN = None
+            
+            model_LN.to(self.device)
+            model_LN.eval()
+        
         epochs = self.params.get('online', 'epochs')
         self.initialize_online(model_LN=model_LN)
         self.t_init += time()
+
         extra_files = len(fls) - 1
         init_files = 1
         t = init_batch
         self.Ab_epoch:list = []
         t_online = []
+        
         if extra_files == 0:     # check whether there are any additional files
             process_files = fls[:init_files]     # end processing at this file
             init_batc_iter = [init_batch]         # place where to start
@@ -1170,12 +1193,14 @@ class OnACID(object):
             process_files = fls[:init_files + extra_files]   # additional files
             # where to start reading at each file
             init_batc_iter = [init_batch] + [0]*extra_files
+        
         if self.params.get('online', 'save_online_movie') + self.params.get('online', 'show_movie'):
             resize_fact = 2
             fourcc = cv2.VideoWriter_fourcc(*self.params.get('online', 'opencv_codec'))
             out = cv2.VideoWriter(self.params.get('online', 'movie_name_online'),
                                   fourcc, 30, tuple([int(resize_fact*2*x) for x in self.params.get('data', 'dims')]),
                                   True)
+        
         # Iterate through the epochs
         for iter in range(epochs):
             if iter == epochs - 1 and self.params.get('online', 'stop_detection'):
@@ -1199,33 +1224,36 @@ class OnACID(object):
                 while True:   # process each file
                     try:
                         frame = next(Y_)
+                        frame += 1
+                        t_frame_start = time()
+
                         if model_LN is not None:
+                            activity = 0.
                             if self.params.get('ring_CNN', 'remove_activity'):
                                 activity = self.estimates.Ab[:,:self.N].dot(self.estimates.C_on[:self.N, t-1]).reshape(self.params.get('data', 'dims'), order='F')
                                 if self.params.get('online', 'normalize'):
                                     activity *= self.img_norm
-                            else:
-                                activity = 0.
-#                                frame = frame.astype(np.float32) - activity
-                            frame = frame - np.squeeze(model_LN.predict(np.expand_dims(np.expand_dims(frame.astype(np.float32) - activity, 0), -1)))
+                           
+                            frame_processed = frame.astype(np.float32) - activity
+                            with torch.no_grad():
+                                frame_tensor = torch.from_numpy(frame_processed).float().unsqueeze(0).unsqueeze(0).to(self.device)
+                                background = model_LN(frame_tensor)
+                                background_np = background.squeeze().cpu().numpy()
+
+                            frame = frame - background_np
                             frame = np.maximum(frame, 0)
-                        frame_count += 1
-                        t_frame_start = time()
+
                         if np.isnan(np.sum(frame)):
-                            raise Exception('Frame ' + str(frame_count) +
-                                            ' contains NaN')
+                            raise Exception('Frame {frame_count} contains NaN')
                         if t % 500 == 0:
-                            logger.info(f'Epoch: {iter + 1}. {t}' +
-                                         ' frames have been processed in total. ' +
-                                         f'{self.N - old_comps} new components were added. Total # of components is '
-                                         + str(self.estimates.Ab.shape[-1] - self.params.get('init', 'nb')))
+                            logger.info(f'Epoch: {iter + 1}. {t} frames have been processed.'
+                                         f'{self.N - old_comps} new components were added. Total: {self.N}')
                             old_comps = self.N
 
                         # Downsample and normalize
                         frame_ = frame.copy().astype(np.float32)
                         if self.params.get('online', 'ds_factor') > 1:
                             frame_ = cv2.resize(frame_, self.img_norm.shape[::-1])
-
                         if self.params.get('online', 'normalize'):
                             frame_ -= self.img_min     # make data non-negative
 
@@ -1258,7 +1286,8 @@ class OnACID(object):
                                 break
                         t += 1
                         t_online.append(time() - t_frame_start)
-                    except  (StopIteration, RuntimeError):
+                    except  (StopIteration, RuntimeError) as e:
+                        logger.info(f"Finished processing file {ffll}. Reason: {e}") 
                         break
         
             self.Ab_epoch.append(self.estimates.Ab.copy())
@@ -2009,8 +2038,7 @@ def get_candidate_components(sv, dims, Yres_buf, min_num_trial=3, gSig=(5, 5),
                              gHalf=(5, 5), sniper_mode=True, rval_thr=0.85,
                              patch_size=50, loaded_model=None, test_both=False,
                              thresh_CNN_noisy=0.5, use_peak_max=False,
-                             thresh_std_peak_resid = 1, mean_buff=None,
-                             tf_in=None, tf_out=None):
+                             thresh_std_peak_resid = 1, mean_buff=None):
     """
     Extract new candidate components from the residual buffer and test them
     using space correlation or the CNN classifier. The function runs the CNN
@@ -2091,11 +2119,23 @@ def get_candidate_components(sv, dims, Yres_buf, min_num_trial=3, gSig=(5, 5),
         Ain2 /= np.std(Ain2,axis=1)[:,None]
         Ain2 = np.reshape(Ain2,(-1,) + tuple(np.diff(ijSig_cnn).squeeze()),order= 'F')
         Ain2 = np.stack([cv2.resize(ain,(patch_size ,patch_size)) for ain in Ain2])
-        if tf_in is None:
-            predictions = loaded_model.predict(Ain2[:,:,:,np.newaxis], batch_size=min_num_trial, verbose=0)
-        else:
-            predictions = loaded_model.run(tf_out, feed_dict={tf_in: Ain2[:, :, :, np.newaxis]})
-        keep_cnn = list(np.where(predictions[:, 0] > thresh_CNN_noisy)[0])
+
+        final_crops = Ain2[:, :, :, np.newaxis]
+        final_crops_tensor = torch.tensor(final_crops, dtype=torch.float32).permute(0, 3, 1, 2)
+        
+        #Create DataLoader for batching 
+        dataset = TensorDataset(final_crops_tensor)
+        loader = DataLoader(dataset, batch_size=min_num_trial, shuffle=False)
+
+        loaded_model.eval()
+        all_predictions = []
+        with torch.no_grad():
+            for batch in loader:
+                outputs = loaded_model(batch[0])
+                all_predictions.append(outputs)   
+        
+        predictions = torch.cat(all_predictions).cpu().numpy()
+        keep_cnn = list(np.where(predictions_np[:,0] > thresh_CNN_noisy)[0])
         cnn_pos = Ain2[keep_cnn]
     else:
         keep_cnn = []  # list(range(len(Ain_cnn)))
@@ -2144,8 +2184,7 @@ def update_num_components(t, sv, Ab, Cf, Yres_buf, Y_buf, rho_buf,
                           mean_buff=None, ssub_B=1, W=None, b0=None,
                           corr_img=None, first_moment=None, second_moment=None,
                           crosscorr=None, col_ind=None, row_ind=None, corr_img_mode=None,
-                          max_img=None, downscale_matrix=None, upscale_matrix=None,
-                          tf_in=None, tf_out=None):
+                          max_img=None, downscale_matrix=None, upscale_matrix=None):
     """
     Checks for new components in the residual buffer and incorporates them if they pass the acceptance tests
     """
@@ -2174,8 +2213,7 @@ def update_num_components(t, sv, Ab, Cf, Yres_buf, Y_buf, rho_buf,
         min_num_trial=min_num_trial, gSig=gSig, gHalf=gHalf,
         sniper_mode=sniper_mode, rval_thr=rval_thr, patch_size=50,
         loaded_model=loaded_model, thresh_CNN_noisy=thresh_CNN_noisy,
-        use_peak_max=use_peak_max, test_both=test_both, mean_buff=mean_buff,
-        tf_in=tf_in, tf_out=tf_out)
+        use_peak_max=use_peak_max, test_both=test_both, mean_buff=mean_buff)
 
     ind_new_all = ijsig_all
 
