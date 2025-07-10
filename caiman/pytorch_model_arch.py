@@ -24,16 +24,19 @@ class PyTorchCNN(nn.Module):
         self.fc2 = nn.Linear(in_features=512, out_features=2)
 
     def forward(self, x):
+        # Convolutional Block 1 
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = self.pool1(x)
         x = self.dropout1(x)
 
+        # Convolutional block 2 
         x = F.relu(self.conv3(x))
         x = F.relu(self.conv4(x))
         x = self.pool2(x)
         x = self.dropout2(x)
         
+        # Flattening and in_features layers
         x = self.flatten(x)
         x = F.relu(self.fc1(x))
         x = self.dropout3(x)

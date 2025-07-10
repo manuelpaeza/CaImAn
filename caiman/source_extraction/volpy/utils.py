@@ -10,7 +10,9 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 import numpy as np
 import os
-import tensorflow as tf
+import torch
+import torchvision 
+from torchvision.transforms import functional as F
 import caiman as cm
 from caiman.external.cell_magic_wand import cell_magic_wand_single_point
 from caiman.paths import caiman_datadir
@@ -113,22 +115,32 @@ def mrcnn_inference(img, size_range, weights_path, display_result=True):
     import caiman.source_extraction.volpy.mrcnn.model as modellib
     config = neurons.NeuronsConfig()
     class InferenceConfig(config.__class__):
-        # Run detection on one img at a time
-        GPU_COUNT = 1
-        IMAGES_PER_GPU = 1
         DETECTION_MIN_CONFIDENCE = 0.7
-        IMAGE_RESIZE_MODE = "pad64"
-        IMAGE_MAX_DIM = 512
-        RPN_NMS_THRESHOLD = 0.7
-        POST_NMS_ROIS_INFERENCE = 1000
     config = InferenceConfig()
     config.display()
     model_dir = os.path.join(caiman_datadir(), 'model')
-    DEVICE = "/cpu:0"  # /cpu:0 or /gpu:0
-    with tf.device(DEVICE):
-        model = modellib.MaskRCNN(mode="inference", model_dir=model_dir,
-                                  config=config)
-    tf.keras.Model.load_weights(model.keras_model, weights_path, by_name=True)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+    model = torchvision.models.detection.maskrcnn_resnet50_fpn(weights='DEFAULT')
+    if weights_path:
+        print(f"Loading custom weights from: {weights_path}")
+        model.load_state_dict(torch.load(weights_path, map_location=device))
+
+    model.to(device)
+    model.eval() # Set model to evaluation mode
+
+    if img.ndim == 2:
+        img_rgb = np.stack([img, img, img], axis=-1)
+    else:
+        img_rgb = img
+
+    # Convert to tensor and normalize
+    input_tensor = F.to_tensor(img_rgb).to(device)
+
+    # Perform inference
+    with torch.no_grad():
+        predictions = model([input_tensor])
+
     results = model.detect([img], verbose=1)
     r = results[0]
     selection = np.logical_and(r['masks'].sum(axis=(0,1)) > size_range[0] ** 2, 

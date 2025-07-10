@@ -261,7 +261,7 @@ class RingCNN_NL(nn.Module):
     with ring shape convolutions.
     """
     def __init__(self, shape, n_channels=8, gSig=5, r_factor=1.5,
-                 use_add=True, initializer='uniform', width=5, activation='relu',
+                 use_add=True, initializer='he_normal', width=5, activation='relu',
                  use_bias=True):
         super().__init__()
         height, width_shape, in_channels = shape
@@ -310,18 +310,20 @@ def rate_scheduler(factor=0.5, epoch_length=200, samples_length=1e4):
         return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
     return scheduler_factory
 
-def create_LN_model(shape, n_channels=2, gSig=5, r_factor=1.5, 
+def create_LN_model(Y=None, shape=None, n_channels=2, gSig=5, r_factor=1.5, 
                     use_add=True, initializer='uniform', width=5, use_bias=False):
     """ Creates a PyTorch convolutional neural network with ring shape convolutions
     and multiplicative layers.
     """
+    if shape is None:
+        raise ValueError("The 'shape' argument must be provided for the PyTorch model.")
     model_LN = RingCNN_LN(shape=shape, n_channels=n_channels, gSig=gSig,
                        r_factor=r_factor, use_add=use_add, initializer=initializer,
                        width=width, use_bias=use_bias)
 
     return model_LN
 
-def create_NL_model(shape, n_channels=8, gSig=5, r_factor=1.5,
+def create_NL_model(Y=None, shape=None, n_channels=8, gSig=5, r_factor=1.5,
                     use_add=True, initializer='he_normal',
                     activation='relu', width=5, use_bias=True):
     """ Creates a PyTorch convolutional neural network with ring shape convolutions 
@@ -373,13 +375,16 @@ def create_NL_model(shape, n_channels=8, gSig=5, r_factor=1.5,
         Optimizer: torch optimizer (updating each step)
         Criterion: torch loss function 
     """
+    if shape is None:
+        raise ValueError("The 'shape' argument must be provided for the PyTorch model.")
     model_NL = RingCNN_NL(shape=shape, n_channels=n_channels, gSig=gSig,
                        r_factor=r_factor, use_add=use_add, initializer=initializer,
                        activation=activation, width=width, use_bias=use_bias)
     return model_NL
 
-def fit_model(model, Y, optimizer, criterion, patience=5, val_split=0.2, 
-        batch_size=32, epochs=500, schedule=None, device=None):
+def fit_model(model, Y, optimizer, criterion, patience=5, 
+            val_split=0.2, batch_size=32, epochs=500, 
+            schedule=None, device=None):
     """
     Fits the PyTorch Ring-CNN model with an interface similar to Keras.
 
