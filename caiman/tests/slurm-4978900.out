@@ -1,0 +1,18 @@
+Traceback (most recent call last):
+  File "/var/spool/slurmd/job4978900/slurm_script", line 16, in <module>
+    from torchvision.ops import nms, roi_align
+  File "/mnt/home/mpaez/miniforge3/envs/caiman_pytorch/lib/python3.12/site-packages/torchvision/__init__.py", line 10, in <module>
+    from torchvision import _meta_registrations, datasets, io, models, ops, transforms, utils  # usort:skip
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/home/mpaez/miniforge3/envs/caiman_pytorch/lib/python3.12/site-packages/torchvision/_meta_registrations.py", line 163, in <module>
+    @torch.library.register_fake("torchvision::nms")
+     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/home/mpaez/miniforge3/envs/caiman_pytorch/lib/python3.12/site-packages/torch/library.py", line 1023, in register
+    use_lib._register_fake(op_name, func, _stacklevel=stacklevel + 1)
+  File "/mnt/home/mpaez/miniforge3/envs/caiman_pytorch/lib/python3.12/site-packages/torch/library.py", line 214, in _register_fake
+    handle = entry.fake_impl.register(func_to_register, source)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/home/mpaez/miniforge3/envs/caiman_pytorch/lib/python3.12/site-packages/torch/_library/fake_impl.py", line 31, in register
+    if torch._C._dispatch_has_kernel_for_dispatch_key(self.qualname, "Meta"):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: operator torchvision::nms does not exist
