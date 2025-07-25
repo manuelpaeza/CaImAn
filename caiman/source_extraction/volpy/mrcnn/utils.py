@@ -13,7 +13,6 @@ import math
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-# from packaging.version import Version
 import scipy
 from scipy.optimize import linear_sum_assignment
 from skimage.draw import polygon2mask
@@ -25,52 +24,60 @@ from typing import Any, Optional
 class ScaleImage:
     """
     Scale image so it is between 0-1: works on floats only
-
-    Note normalize is (x-mean)/std
-    You can use this to get data in [0,1] if you define
-    mean as x.min(), and std as x.max()-x.min()  
-
-    This was suggested by Nicolas Hug, see: https://github.com/pytorch/vision/issues/6753#issuecomment-1884978269
     """
     def __call__(self, img):
-        min_val = img.min()
-        max_val = img.max()
+        min_val, max_val = img.min(), img.max()
         range = max_val - min_val
         return F.normalize_image(img, mean=[min_val, min_val, min_val], std=[range, range, range])
 
 
 def bounding_box(mask_coords):
     """
-    note coords are in y/x!
+    Calculates the bounding box from a list of mask coordinates.
+    Note: Assumes input coordinates are in (y, x) format.
+
+    Args:
+        mask_coords (np.ndarray): A NumPy array of shape (N, 2)
+                                  where each row is a [y, x] coordinate.
+
+    Returns:
+        A list containing two tuples for the top-left (xmin, ymin)
+        and bottom-right (xmax, ymax) corners of the bounding box.
     """
     x_vals = mask_coords[:,1]
     y_vals = mask_coords[:,0]
     return [(min(x_vals), min(y_vals)), (max(x_vals), max(y_vals))]
 
 def box_area(bbox):
-    """ 
-    return sa of bbox (bbox in xmin, ymin, xmax, ymax form)
+    """
+    Calculates the area of a bounding box.
+
+    Args:
+        bbox: A list or tuple representing the bounding box in
+              (xmin, ymin, xmax, ymax) format.
+
+    Returns:
+        The area of the bounding box.
     """
     return (bbox[3]-bbox[1])*(bbox[2]-bbox[0])
 
-def collate_fn(batch):
-    """
-    from torchvision utils.py
-    """
-    return tuple(zip(*batch))
-
 def create_mask(shape, mask_dict):
     """
-    from volpy dict representation of mask, create standard rxc mask 
+    Creates a 2D boolean mask from a dictionary of polygon coordinates.
 
-    params:
-        shape (rxc) image.shape
-        mask_dict (volpy representation of mask that includes 'all_points_x' and 'all_points_y' keys)
-    returns:
-        rxc Boolean mask
+    This function is designed to work with mask dictionaries that store
+    polygon vertices in separate keys for x and y coordinates.
+
+    Args:
+        shape (Tuple[int, int]): The desired output shape of the mask (rows, columns).
+        mask_dict (Dict): A dictionary containing the keys 'all_points_x' and
+                          'all_points_y', which hold the polygon's vertex coordinates.
+
+    Returns:
+        np.ndarray: A 2D boolean array of the specified shape, where pixels
+                    inside the polygon are True and pixels outside are False.
     """
-    y_points = mask_dict['all_points_y']
-    x_points = mask_dict['all_points_x']
+    x_points, y_points = mask_dict['all_points_x'], mask_dict['all_points_y']
     mask_coords = np.stack([y_points, x_points]).T
     return polygon2mask(shape, mask_coords)
 
@@ -157,7 +164,29 @@ def distance_masks(M_s:list, cm_s:list[list], max_dist: float, enclosed_thr:Opti
     return D_s    
 
 def find_matches(D_s, print_assignment: bool = False) -> tuple[list, list]:
-    # todo todocument
+    """
+    Finds the optimal assignments for a series of cost matrices using the
+    Hungarian algorithm (linear sum assignment).
+
+    This function iterates through a list of distance/cost matrices. For each
+    matrix, it computes the assignment of rows to columns that minimizes the
+    total cost.
+
+    Args:
+        D_s (List[np.ndarray]): A list of 2D NumPy arrays, where each array is a
+                                cost matrix. `D_s[i][j, k]` represents the cost
+                                of assigning row `j` to column `k` in the i-th matrix.
+        print_assignment (bool): If True, prints the individual row-column
+                                 assignments and their costs for each matrix.
+
+    Returns:
+        A tuple containing two lists:
+        matches (List[Tuple[np.ndarray, np.ndarray]]): A list where each element
+          is a tuple of two arrays `(row_ind, col_ind)`. These arrays contain the
+          indices of the optimal assignments for the corresponding cost matrix.
+        costs (List[List[float]]): A list where each element is a list of costs
+          for the matched pairs in the corresponding assignment.
+    """
 
     matches = []
     costs = []
@@ -338,13 +367,35 @@ def nf_match_neurons_in_binary_masks(masks_gt,
 
 def normalize_image(image):
     """
-    normalize grayscale image to values between 0 and 1 and make sure it is float32
+    Normalizes a grayscale image to have values between 0.0 and 1.0
+    and ensures the data type is float32.
+
+    Args:
+        image (np.ndarray): The input grayscale image as a NumPy array.
+
+    Returns:
+        np.ndarray: The normalized image as a float32 NumPy array.
     """
     image_shifted = image - image.min()
     image_normed = image_shifted/image_shifted.max()
     return np.array(image_normed, dtype=np.float32)
 
 def norm_nrg(a_):
+    """
+    Calculates the normalized cumulative energy map of an array.
+
+    The function flattens the input array, sorts its elements in descending
+    order, and computes the normalized cumulative energy. The resulting energy
+    values are then placed back into an array with the original shape at the
+    locations corresponding to the original element values.
+
+    Args:
+        a_ (np.ndarray): The input NumPy array.
+
+    Returns:
+        np.ndarray: An array of the same shape as the input, containing the
+                    normalized cumulative energy values.
+    """
     a = a_.copy()
     dims = a.shape
     a = a.reshape(-1, order='F')
@@ -355,15 +406,49 @@ def norm_nrg(a_):
     a[indx] = cumEn
     return a.reshape(dims, order='F')
 
-def thresholded_predictions(pred, threshold=0.7):
+def f1_score(gt_masks, pred_masks, iou_threshold=0.5):
     """
-    get masks and boxes for those above threshold
+    Calculates the F1 score for a set of ground truth and predicted masks.
+
+    Args:
+        gt_masks (np.ndarray): A boolean or integer array of ground truth masks,
+                               shaped (num_gt_masks, height, width).
+        pred_masks (np.ndarray): A boolean or integer array of predicted masks,
+                                 shaped (num_pred_masks, height, width).
+        iou_threshold (float): The IoU threshold to consider a predicted mask
+                               as a true positive. Default is 0.5.
+
+    Returns:
+        float: The calculated F1 score, a value between 0.0 and 1.0.
     """
-    numels = len(torch.where(pred['scores'] >= threshold)[0])
-    masks = pred['masks'][:numels].squeeze()
-    boxes = pred['boxes'][:numels]
+    if pred_masks.shape[0] == 0 or gt_masks.shape[0] == 0:
+        return 0.0
     
-    return masks, boxes 
+    iou_matrix = np.zeros((gt_masks.shape[0], pred_masks.shape[0]))
+    for i, gt_mask in enumerate(gt_masks):
+        for j, pred_mask in enumerate(pred_masks):
+            intersection = np.logical_and(gt_mask, pred_mask).sum()
+            union = np.logical_or(gt_mask, pred_mask).sum()
+            if union > 0:
+                iou_matrix[i, j] = intersection / union
+
+    true_positives = 0
+    matched_preds = set()
+    for i in range(gt_masks.shape[0]):
+        if iou_matrix.shape[1] > 0:
+            best_match_idx = np.argmax(iou_matrix[i, :])
+            if iou_matrix[i, best_match_idx] > iou_threshold:
+                if best_match_idx not in matched_preds:
+                    true_positives += 1
+                    matched_preds.add(best_match_idx)
+    
+    false_positives = pred_masks.shape[0] - len(matched_preds)
+    false_negatives = gt_masks.shape[0] - true_positives
+    
+    precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
+    recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
+    
+    return 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
   
 def vp_load_image(dir, fnames, ind):
     """

@@ -11,102 +11,39 @@ import time
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, TensorDataset, DataLoader 
+from torch.utils.data import DataLoader, TensorDataset
 
 import caiman.base.movies
 from caiman.paths import caiman_datadir
 
-class CalciumDataset(Dataset):
-    def __init__(self, files, batch_size=32, random_state=42, 
-                 train=True, var_name_hdf5='mov', subindices=None):
-        """ 
-        Create a Dataset object for Ca datasets.
-        Args:
-            files: list of paths to HDF5 files
-            batch_size: number of frames per batch
-            random_state: RNG seed for shuffling
-            train: whether to shuffle files each epoch
-            var_name_hdf5: name of the variable in HDF5
-            subindices: optional slicing of frame indices
-        """
-        if isinstance(files, str):
-            files = [files]
-        self.files = files
-        self.batch_size = batch_size
-        self.random_state = np.random.RandomState(random_state)
-        self.train = train
-        self.var_name_hdf5 = var_name_hdf5
-
-        dims, T = caiman.base.movies.get_file_size(files, var_name_hdf5=var_name_hdf5)
-        self.dim = dims
-        if subindices is not None:
-            self.frame_indices = list(range(T))[subindices]
-        else:
-            self.frame_indices = list(range(T))
-
-        self.total_frames = len(self.frame_indices)
-        self.on_epoch_end()
-    
-    def __len__(self):
-        return self.total_frames // self.batch_size
-
-    def __getitem__(self, idx):
-        start_idx = self.frame_indices(idx * self.batch_size)
-        end_idx = start_idx + self.batch_size
-        X = caiman.base.movies.load(self.files[0], subindices=slice(start_idx, end_idx),
-                                    var_name_hdf5=self.var_name_hdf5)
-        X = np.expand_dims(X.astype(np.float32), axis=1)
-        X = torch.tensor(X)
-        return X, X #return input-output pair for autoencoder-style training
-
-    def on_epoch_end(self):
-        if self.train:
-            self.random_state.shuffle(self.files)
-
 class MaskedConv2D(nn.Module):
-    """ Creates a trainable ring convolutional kernel with non zero entries between
-    user specified radius_min and radius_max. Uses a random uniform non-negative
-    initializer unless specified otherwise.
-
-    Args:
-        output_dim: int, default: 1
-            number of output channels (number of kernels)
-
-        kernel_size: (int, int), default: (5, 5)
-            dimension of 2d boundaing box
-
-        strides: (int, int), default: (1, 1)
-            stride for convolution (modifying that will downsample)
-
-        radius_min: int, default: 2
-            inner radius of kernel
-
-        radius_max: int, default: 3
-            outer radius of kernel (typically: 2*radius_max - 1 = kernel_size[0])
-
-        initializer: 'uniform' initializer, default: 'uniform'
-            initializer for ring weights. 'uniform' will choose from a non-negative
-            random uniform distribution such that the expected value of the sum
-            is 2.
-
-        use_bias: bool, default: True
-            add a bias term to each convolution kernel
-
-    Returns:
-        Masked_Conv2D: Pytorch layer
-            A trainable layer implementing the convolution with a ring
+    """ 
+    Creates a trainable ring convolutional kernel with non zero entries between
+    user specified radius_min and radius_max. 
     """
     def __init__(self, in_channels, out_channels, kernel_size=(5,5), stride=(1,1),
                radius_min=2, radius_max=3, initializer='uniform',
                use_bias=True): 
+        """ 
+        Args: 
+            in_channels (int): Number of input channels 
+            out_channels (int): Number of output channels 
+            kernel_size (tuple[int, int]): Dimension of 2d bounding box 
+            stride (tuple[int, int]): The stride of the convolution
+            radius_min (int): Inner radius of kernel
+            radius_max (int): Outer radius of kernel
+            initializer (str): Weight initialization method ('uniform', 'he_normal'). 
+            use_bias (bool): If True, adds a learnable bias to the output.
+        """
         super(MaskedConv2D, self).__init__()
-        self.in_channels = in_channels
+        self.in_channels = in_channels 
         self.out_channels = out_channels
         self.kernel_size = kernel_size
+        self.stride = stride
         self.radius_min = radius_min
         self.radius_max = radius_max
-        self.stride = stride
         self.use_bias = use_bias
+
         self.padding = (kernel_size[0] //2, kernel_size[1] // 2)
 
         xx = np.arange(-(kernel_size[0]-1)//2, (kernel_size[0]+1)//2)
@@ -127,7 +64,7 @@ class MaskedConv2D(nn.Module):
         self.build_parameters(initializer)
 
     def build_parameters(self, initializer):
-        # Initialize bias to zero
+        """Initializes the weights and bias."""
         if self.use_bias:
             nn.init.constant_(self.bias, 0)
 
@@ -145,11 +82,19 @@ class MaskedConv2D(nn.Module):
         return y 
 
 class Hadamard(nn.Module):
-    """ Creates a PyTorch multiplicative layer that performs
+    """ 
+    Creates a PyTorch multiplicative layer that performs
     pointwise multiplication with a set of learnable weights, followed by
     a sum across channels. 
     """
     def __init__(self, channels, height, width, initializer_val=0.1):
+        """
+        Args:
+            channels (int): The number of input channels.
+            height (int): The height of the learnable weight kernel.
+            width (int): The width of the learnable weight kernel.
+            initializer_val (float): The constant value to initialize the weights with.
+        """
         super(Hadamard, self).__init__()
         self.kernel = nn.Parameter(torch.empty(1, channels, height, width))
         nn.init.constant_(self.kernel, initializer_val)
@@ -160,13 +105,17 @@ class Hadamard(nn.Module):
         return sm
 
 class Additive(nn.Module):
-    """ Creates a PyTorch additive layer that performs
+    """ 
+    Creates a PyTorch additive layer that performs
     pointwise addition with a set of learnable weights.
-
-    Args:
-        initializer: initializer_val, default: 0.0
     """
     def __init__(self, height, width, initializer_val=0.0):
+        """
+        Args:
+            height (int): The height of the learnable weight kernel.
+            width (int): The width of the learnable weight kernel.
+            initializer_val (float): The constant value to initialize the weights with.
+        """
         super(Additive, self).__init__()
         self.kernel = nn.Parameter(torch.empty(1, 1, height, width))
         nn.init.constant_(self.kernel, initializer_val)
@@ -192,14 +141,27 @@ def cropped_loss(gSig=0):
     return my_loss
 
 def quantile_loss(qnt=.50):
-    """ Returns a quantile loss function that can be used for training.
+    """
+    Returns a quantile loss function that can be used for training.
+
     Args:
-        qnt: float, default: 0.5
-            desired quantile (0 < qnt < 1)
+        qnt (float): The desired quantile, where 0 < qnt < 1. 
+        Default is 0.5, which is equivalent to Mean Absolute Error.
+
     Returns:
-        my_qnt_loss: quantile loss function
+        A function that calculates the quantile loss between two tensors.
     """
     def my_qnt_loss(y_true, y_pred):
+        """
+        Calculates the quantile loss.
+
+        Args:
+            y_true (torch.Tensor): The ground truth values.
+            y_pred (torch.Tensor): The predicted values.
+
+        Returns:
+            torch.Tensor: The mean quantile loss, a scalar tensor.
+        """
         error = y_true - y_pred 
         return torch.mean(torch.where(error > 0, error*qnt, error*(qnt - 1)))
     return my_qnt_loss
@@ -225,11 +187,22 @@ def get_run_logdir():
     return os.path.join(root_logdir, run_id)
 
 class RingCNN_LN(nn.Module):
-    """ PyTorch two-layer linear convolutional neural network with 
-    ring shape convolutions
+    """
+    PyTorch two-layer linear convolutional neural network with ring-shaped convolutions.
     """
     def __init__(self, shape, n_channels=2, gSig=5, r_factor=1.5,
                  use_add=True, initializer='uniform', width=5, use_bias=False):
+        """
+        Args:
+            shape (tuple): The shape of the input (height, width, in_channels).
+            n_channels (int): Number of channels in the first convolutional layer.
+            gSig (float): Base for calculating the kernel radius.
+            r_factor (float): Factor to multiply with gSig for the radius.
+            use_add (bool): If True, includes the final Additive layer.
+            initializer (str): Weight initialization for the convolutional layer.
+            width (int): The width of the ring in the convolutional kernel.
+            use_bias (bool): If True, the convolutional layer uses a bias term.
+        """
         super().__init__()
         height, width_shape, in_channels = shape
         radius_min = int(gSig * r_factor)
@@ -263,6 +236,18 @@ class RingCNN_NL(nn.Module):
     def __init__(self, shape, n_channels=8, gSig=5, r_factor=1.5,
                  use_add=True, initializer='he_normal', width=5, activation='relu',
                  use_bias=True):
+        """
+        Args:
+            shape (tuple): The shape of the input (height, width, in_channels).
+            n_channels (int): Number of channels in the first convolutional layer.
+            gSig (float): Base for calculating the kernel radius.
+            r_factor (float): Factor to multiply with gSig for the radius.
+            use_add (bool): If True, the final bias term is a separate Additive layer.
+            initializer (str): Weight initialization for the convolutional layer.
+            width (int): The width of the ring in the convolutional kernel.
+            activation (str): The name of the torch.nn.functional activation function.
+            use_bias (bool): If True, the first convolutional layer uses a bias term.
+        """
         super().__init__()
         height, width_shape, in_channels = shape
         radius_min = int(gSig * r_factor)
@@ -286,12 +271,6 @@ class RingCNN_NL(nn.Module):
     def forward(self, x):
         x = self.conv(x)
         x = self.activation(x)
-        # b, c, h, w = x.shape
-        # x_permuted = x.permute(0, 2, 3, 1) 
-        # x_reshaped = x_permuted.reshape(b * h * w, c)
-        # x_dense = self.dense_layer(x_reshaped)
-        # x_out = x_dense.reshape(b, h, w, 1)
-        # x = x_out.permute(0, 3, 1, 2)
         x = self.final_conv(x)
         if self.use_add:
             x = self.add(x)

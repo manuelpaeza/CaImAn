@@ -6,10 +6,10 @@ import logging
 import numpy as np
 import os
 import peakutils
-import torch
 import scipy
 from scipy.sparse import csc_matrix
 from scipy.stats import norm
+import torch
 from typing import Any, Union
 import warnings
 

@@ -15,35 +15,58 @@ import torchvision
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
 
-from .utils import thresholded_predictions 
-
-# Model (Pre-trained on the COCO Dataset with last-layer fine-tuned)
-############################################################
-
+# Model (Pre-trained on the COCO Dataset
 def get_model_instance_segmentation(num_classes):
+    """
+    Loads a pre-trained Mask R-CNN model and modifies its classification
+    and mask prediction heads for a custom number of classes.
+
+    Args:
+        num_classes (int): The number of classes for the custom dataset,
+                           including the background class.
+
+    Returns:
+        torch.nn.Module: The modified Mask R-CNN model ready for fine-tuning.
+    """
     # load an instance segmentation model pre-trained on COCO, fpn_v2 provides better performance
     model = torchvision.models.detection.maskrcnn_resnet50_fpn_v2(weights='COCO_V1', trainable_backbone_layers=3)
-    
+
     # get number of input features for the classifier
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     
-    # replace the pre-trained head with a new one
+    # Replace the pre-trained head with a new one
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
     
-    # now get the number of input features for the mask classifier
+    # Get the number of input features for the mask classifier
     in_features_mask = model.roi_heads.mask_predictor.conv5_mask.in_channels
     hidden_layer = 256
     
-    # and replace the mask predictor with a new one
-    model.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask, hidden_layer, num_classes)
+    # Replace the mask predictor with a new one
+    model.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask, 
+                                                        hidden_layer, 
+                                                        num_classes)
     return model
 
 def mrcnn_inference(model, img, eval_transform, 
                     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'), 
                     thresh=0.5):
     """
-    inference using Mask R-CNN network
+    Performs inference using a Mask R-CNN network.
+
+    Args:
+        model (torch.nn.Module): The trained Mask R-CNN model.
+        img: An image in a format compatible with the transform (e.g., PIL Image).
+        eval_transform (callable): A function to transform the input image into a tensor.
+        device (torch.device, optional): The device to run inference on. Defaults to CUDA if available.
+        thresh (float, optional): The confidence score threshold for predictions. Defaults to 0.5.
+
+    Returns:
+        Tuple containing the following:
+        - predicted_masks (torch.Tensor): The filtered, raw mask predictions.
+        - predicted_boxes (torch.Tensor): The filtered bounding box predictions.
+        - binarized_masks (np.ndarray): The predicted masks, binarized to uint8.
     """
+    model.to(device)
     model.eval()
     with torch.no_grad():
         x = eval_transform(img)
@@ -54,3 +77,22 @@ def mrcnn_inference(model, img, eval_transform,
     predicted_masks, predicted_boxes = thresholded_predictions(pred, threshold=thresh) 
     binarized_masks = (0.5+predicted_masks).detach().cpu().numpy().astype(np.uint8) 
     return predicted_masks, predicted_boxes, binarized_masks
+
+def thresholded_predictions(pred, threshold=0.7):
+    """
+    Filters predictions based on a confidence score threshold.
+
+    Args:
+        pred (Dict[str, torch.Tensor]): A dictionary containing 'scores',
+                                        'masks', and 'boxes' tensors.
+                                        Assumes predictions are sorted by score.
+        threshold (float): The confidence score threshold for filtering.
+
+    Returns:
+        A tuple containing the filtered masks and boxes tensors.
+    """
+    numels = len(torch.where(pred['scores'] >= threshold)[0])
+    masks = pred['masks'][:numels].squeeze()
+    boxes = pred['boxes'][:numels]
+    
+    return masks, boxes 

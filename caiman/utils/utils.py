@@ -25,7 +25,7 @@ import scipy
 import ssl
 import subprocess
 import time
-import torch #Import toch to check for its types
+import torch
 from scipy.ndimage import gaussian_filter
 from tifffile import TiffFile
 from typing import Any, Union, Iterable
@@ -137,7 +137,7 @@ def download_model(name:str='mask_rcnn', save_folder:str='') -> str:
     """
     logger = logging.getLogger("caiman")
 
-    file_dict = {'mask_rcnn': 'https://caiman.flatironinstitute.org/~neuro/caiman_downloadables/model/mask_rcnn_neurons_0040.h5'}
+    file_dict = {'mask_rcnn': 'https://caiman.flatironinstitute.org/~neuro/caiman_downloadables/model/mask_rcnn.pt'}
     base_folder = os.path.join(caiman_datadir(), 'model')
     if os.path.exists(base_folder):
         if not os.path.isdir(os.path.join(base_folder, save_folder)):
@@ -676,4 +676,5 @@ class caitimer(contextlib.ContextDecorator):
         return self
     def __exit__(self, type, value, traceback):
         print(f"{self.message}: {time.time() - self.start}")
+
 

@@ -879,9 +879,9 @@ class OnACID(object):
 
             with torch.no_grad():
                 for i in range(0, len(Y), batch_size):
-                    #1. Get batch of frames fromt eh caiman movie object
+                    #1. Get batch of frames from the caiman movie object
                     #2. Preprocess for PyTorch model
-                    #3. Predict backgorund
+                    #3. Predict background
                     #4. Store result after converting back to numpy and remoivng channel dim
                     batch_frames = Y[i:i + batch_size] 
                     batch_tensor = torch.from_numpy(batch_frames).float().unsqueeze(1).to(device)
