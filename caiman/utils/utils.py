@@ -135,7 +135,7 @@ def download_model(name:str='mask_rcnn', save_folder:str='') -> str:
     """
     logger = logging.getLogger("caiman")
 
-    file_dict = {'mask_rcnn': 'https://caiman.flatironinstitute.org/~neuro/caiman_downloadables/model/mask_rcnn_neurons_0040.pt'}
+    file_dict = {'mask_rcnn': 'https://caiman.flatironinstitute.org/~neuro/caiman_downloadables/model/mrcnn_epoch_100.pt'}
     base_folder = os.path.join(caiman_datadir(), 'model')
     if os.path.exists(base_folder):
         if not os.path.isdir(os.path.join(base_folder, save_folder)):

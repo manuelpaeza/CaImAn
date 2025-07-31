@@ -10,9 +10,13 @@ Written by Waleed Abdulla
 Revised by Eric Thompson, Chanjia Cai, and Manuel Paez 
 """
 
+import numpy as np
+import torch 
 import torchvision
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
+
+from caiman.source_extraction.volpy.mrcnn.utils import ScaleImage, data_transform
 
 # Model (Pre-trained on the COCO Dataset)
 def get_model_instance_segmentation(num_classes):
@@ -45,3 +49,33 @@ def get_model_instance_segmentation(num_classes):
                                                         hidden_layer, 
                                                         num_classes)
     return model
+
+def mrcnn_inference(model, 
+                    img, 
+                    eval_transform, 
+                    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'), 
+                    thresh=0.5):
+    """
+    inference using Mask R-CNN network
+    """
+    model.to(device)
+    model.eval()
+    with torch.no_grad():
+        x = eval_transform(img)
+        x = x.to(device)
+        predictions = model([x, ])
+        pred = predictions[0]
+    
+    predicted_masks, predicted_boxes = thresholded_predictions(pred, threshold=thresh) 
+    binarized_masks = (0.5+predicted_masks).detach().cpu().numpy().astype(np.uint8) 
+    return predicted_masks, predicted_boxes, binarized_masks
+
+def thresholded_predictions(pred, threshold=0.7):
+    """
+    Get masks and boxes for those above threshold
+    """
+    numels = len(torch.where(pred['scores'] >= threshold)[0])
+    masks = pred['masks'][:numels].squeeze()
+    boxes = pred['boxes'][:numels]
+    
+    return masks, boxes 

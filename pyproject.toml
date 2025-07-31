@@ -43,8 +43,6 @@ dependencies = [
   "scipy >= 1.10.1",
   "tifffile",
   "torch",
-  "torchaudio",
-  "torchinfo",
   "torchvision",
   "tqdm",
   "yapf",

@@ -27,10 +27,9 @@ from torchvision.ops.boxes import masks_to_boxes
 from tqdm import tqdm
 from typing import List, Dict, Any
 
-from caiman.source_extraction.volpy.mrcnn.model import get_model_instance_segmentation
-from caiman.source_extraction.volpy.mrcnn.inference import mrcnn_infer
-from caiman.source_extraction.volpy.mrcnn.utils import ScaleImage, create_mask, data_transform, nf_match_neurons_in_binary_masks, normalize_image
 from caiman.source_extraction.volpy.mrcnn.config import Config
+from caiman.source_extraction.volpy.mrcnn.model import get_model_instance_segmentation, mrcnn_inference
+from caiman.source_extraction.volpy.mrcnn.utils import ScaleImage, create_mask, collate_fn, data_transform, nf_match_neurons_in_binary_masks, normalize_image
 
 # Dataset
 class NeuronsDataset(torch.utils.data.Dataset):
@@ -125,25 +124,6 @@ class NeuronsDataset(torch.utils.data.Dataset):
     def print_mask_filenames(self):
         for mask_filename in self.mask_filenames:
             print(mask_filename)
-
-def collate_fn(batch: List[tuple[Any, Any]]):
-    """
-    Custom collate function for a DataLoader.
-
-    When the dataset returns samples that cannot be automatically stacked (e.g.,
-    images of different sizes or targets as dictionaries), this function
-    prevents the DataLoader from trying to batch them together. Instead, it
-    groups the images and targets into separate tuples.
-
-    Args:
-        batch (List[Tuple[Any, Any]]): A list of samples from the dataset,
-                                       where each sample is a tuple (e.g., image, target).
-
-    Returns:
-        A tuple where the first element is a tuple of all images from the batch,
-        and the second element is a tuple of all targets.
-    """
-    return tuple(zip(*batch))
     
 def train_one_epoch(model: nn.Module, optimizer: torch.optim.Optimizer, data_loader: torch.utils.data.DataLoader,
                     device: torch.device, epoch: int) -> float:
@@ -240,7 +220,7 @@ def perform_final_evaluation(model: nn.Module, config, device: torch.device, plo
             data_masks = vp_target['masks']
 
             # Run inference to get predicted masks
-            _, _, binarized_masks = mrcnn_infer(model, img=vp_im.to(device), thresh=config.INFERENCE_THRESHOLD,
+            _, _, binarized_masks = mrcnn_inference(model, img=vp_im.to(device), thresh=config.INFERENCE_THRESHOLD,
                                                     eval_transform=data_transform(train=False), device=device)
 
             # Compare GT and Predicted Masks
@@ -337,7 +317,7 @@ def train_validate(config, plot_results=False):
         if (epoch + 1) % config.SAVE_FREQ == 0:
             model_path = os.path.join(config.MODEL_SAVE_DIR, f'mrcnn_epoch_{epoch+1}.pt')
             torch.save(model.state_dict(), model_path)
-            print(f"\t Model saved to {model_path}")
+            print(f"\tModel saved to {model_path}")
 
     history = {'train_loss': all_train_losses, 'val_loss': all_val_losses, 'lr': all_lrs}
     torch.save(history, os.path.join(config.MODEL_SAVE_DIR, 'volpy_train_history.pt'))
