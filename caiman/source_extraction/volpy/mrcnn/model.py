@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 """
 Mask R-CNN
 The main Mask R-CNN model implementation.
@@ -9,13 +10,11 @@ Written by Waleed Abdulla
 Revised by Eric Thompson, Chanjia Cai, and Manuel Paez 
 """
 
-import numpy as np
-import torch
 import torchvision
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
 
-# Model (Pre-trained on the COCO Dataset
+# Model (Pre-trained on the COCO Dataset)
 def get_model_instance_segmentation(num_classes):
     """
     Loads a pre-trained Mask R-CNN model and modifies its classification
@@ -46,53 +45,3 @@ def get_model_instance_segmentation(num_classes):
                                                         hidden_layer, 
                                                         num_classes)
     return model
-
-def mrcnn_inference(model, img, eval_transform, 
-                    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'), 
-                    thresh=0.5):
-    """
-    Performs inference using a Mask R-CNN network.
-
-    Args:
-        model (torch.nn.Module): The trained Mask R-CNN model.
-        img: An image in a format compatible with the transform (e.g., PIL Image).
-        eval_transform (callable): A function to transform the input image into a tensor.
-        device (torch.device, optional): The device to run inference on. Defaults to CUDA if available.
-        thresh (float, optional): The confidence score threshold for predictions. Defaults to 0.5.
-
-    Returns:
-        Tuple containing the following:
-        - predicted_masks (torch.Tensor): The filtered, raw mask predictions.
-        - predicted_boxes (torch.Tensor): The filtered bounding box predictions.
-        - binarized_masks (np.ndarray): The predicted masks, binarized to uint8.
-    """
-    model.to(device)
-    model.eval()
-    with torch.no_grad():
-        x = eval_transform(img)
-        x = x.to(device)
-        predictions = model([x, ])
-        pred = predictions[0]
-    
-    predicted_masks, predicted_boxes = thresholded_predictions(pred, threshold=thresh) 
-    binarized_masks = (0.5+predicted_masks).detach().cpu().numpy().astype(np.uint8) 
-    return predicted_masks, predicted_boxes, binarized_masks
-
-def thresholded_predictions(pred, threshold=0.7):
-    """
-    Filters predictions based on a confidence score threshold.
-
-    Args:
-        pred (Dict[str, torch.Tensor]): A dictionary containing 'scores',
-                                        'masks', and 'boxes' tensors.
-                                        Assumes predictions are sorted by score.
-        threshold (float): The confidence score threshold for filtering.
-
-    Returns:
-        A tuple containing the filtered masks and boxes tensors.
-    """
-    numels = len(torch.where(pred['scores'] >= threshold)[0])
-    masks = pred['masks'][:numels].squeeze()
-    boxes = pred['boxes'][:numels]
-    
-    return masks, boxes 

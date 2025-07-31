@@ -1,6 +1,7 @@
+#!/usr/bin/env python
 """
 Mask R-CNN
-Common utility functions and classes.
+Common utility, display, and visual functions and classes.
 
 Copyright (c) 2017 Matterport, Inc.
 Licensed under the MIT License (see LICENSE for details)
@@ -8,18 +9,28 @@ Written by Waleed Abdulla
 Revised by Eric Thompson, Changjia Cai, and Manuel Paez 
 """
 
+import colorsys
 import logging
 import math
 import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib.patches import Polygon, Rectangle
 import numpy as np
+import os
+import random
 import scipy
 from scipy.optimize import linear_sum_assignment
 from skimage.draw import polygon2mask
 import time 
 import torch
 from torchvision.transforms.v2 import functional as F
+import torchvision.transforms.v2 as T
 from typing import Any, Optional
+
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib.patches import Polygon, Rectangle
 
 class ScaleImage:
     """
@@ -30,6 +41,53 @@ class ScaleImage:
         range = max_val - min_val
         return F.normalize_image(img, mean=[min_val, min_val, min_val], std=[range, range, range])
 
+def apply_mask(image: np.ndarray, mask: np.ndarray, 
+            color: tuple[float, float, float] = (1, 0, 0), alpha: float = 0.5) -> np.ndarray:
+    """
+    Applies a single colored mask to an image with transparency.
+
+    This function handles both integer (e.g., uint8) and float images.
+    - For float images, color values are assumed to be in the [0, 1] range.
+    - For integer images, color values are scaled to the [0, 255] range.
+
+    Args:
+        image (np.ndarray): The input RGB image of shape (H, W, 3).
+        mask (np.ndarray): A boolean or integer mask of shape (H, W) where
+                           non-zero values indicate the area to mask.
+        color (Tuple[float, float, float]): The RGB color for the mask, with
+                                            values normalized between 0 and 1.
+        alpha (float): The opacity of the mask, from 0 (transparent) to 1 (opaque).
+
+    Returns:
+        np.ndarray: The image with the mask applied, with the same dtype as the input.
+    """
+    for c in range(3):
+        image[:, :, c] = np.where(mask == 1,
+                                  image[:, :, c] *
+                                  (1 - alpha) + alpha * color[c] * 255,
+                                  image[:, :, c])
+    return image
+
+def apply_masks(image: np.ndarray, mask: np.ndarray, 
+            color: tuple[float, float, float], alpha: float = 0.5) -> np.ndarray:
+    """
+    Applies a single mask to an image.
+
+    Args:
+        image (np.ndarray): The input RGB image (H, W, 3) with values from 0-1.
+        mask (np.ndarray): A boolean mask (H, W).
+        color (Tuple[float, float, float]): The RGB color for the mask, normalized to 0-1.
+        alpha (float): The transparency of the mask overlay.
+
+    Returns:
+        np.ndarray: The image with the mask applied.
+    """
+    masked_image = image.copy()
+    
+    for mask_ind, mask in enumerate(data_masks):
+        masked_image = apply_mask(masked_image, mask, color, alpha=alpha)
+        
+    return masked_image       
 
 def bounding_box(mask_coords):
     """
@@ -80,6 +138,34 @@ def create_mask(shape, mask_dict):
     x_points, y_points = mask_dict['all_points_x'], mask_dict['all_points_y']
     mask_coords = np.stack([y_points, x_points]).T
     return polygon2mask(shape, mask_coords)
+
+def data_transform(train: bool = False):
+    """
+    Defines data augmentation and transformation pipelines for object detection.
+
+    Args:
+        train (bool): If True, creates a pipeline with data augmentation
+                      for training. Otherwise, creates a basic pipeline
+                      for validation or testing.
+
+    Returns:
+        T.Compose: A composed torchvision transform object.
+    """
+    transforms = []
+    if train:
+        transforms.append(T.RandomHorizontalFlip(p=0.5))
+        transforms.append(T.RandomVerticalFlip(p=0.5))
+        transforms.append(T.RandomApply([T.RandomRotation(degrees=(-5, 5))], p=0.5))
+        transforms.append(T.ColorJitter(brightness=0.5,
+                                        contrast=0.5,
+                                        saturation=0.5,
+                                        hue=0))
+        transforms.append(T.GaussianBlur(kernel_size=(5, 5), sigma=(0.001, 0.3)))
+        transforms.append(T.SanitizeBoundingBoxes(min_size=2))
+
+    transforms.append(T.ToDtype(torch.float32, scale=False))
+    return T.Compose(transforms)
+
 
 def distance_masks(M_s:list, cm_s:list[list], max_dist: float, enclosed_thr:Optional[float] = None) -> list:
     """
@@ -163,6 +249,68 @@ def distance_masks(M_s:list, cm_s:list[list], max_dist: float, enclosed_thr:Opti
         D_s.append(D)
     return D_s    
 
+def draw_box(box: np.ndarray, color: str = 'white', ax: plt.Axes = None, 
+            line_width: float = 0.5) -> tuple[plt.Axes, patches.Rectangle]:
+    """
+    Draws a single rectangular bounding box on a given axes object.
+
+    Args:
+        box (np.ndarray): A 1x4 array representing a single bounding box
+                          in [xmin, ymin, xmax, ymax] format.
+        color (str): The matplotlib color for the box outline.
+        ax (plt.Axes, optional): The pyplot Axes object upon which the rectangle
+                                 will be drawn. If None, the current axes are used.
+        line_width (float): The width of the box outline.
+
+    Returns:
+        A tuple containing:
+        - ax (plt.Axes): The axes object.
+        - rect (patches.Rectangle): The created matplotlib Rectangle object.
+    """
+    if ax is None:
+        ax = pl.gca()
+        
+    box_origin = (box[0], box[1])
+    box_height = box[3] - box[1] 
+    box_width = box[2] - box[0]
+
+    rect = Rectangle(box_origin, 
+                     width=box_width, 
+                     height=box_height,
+                     color=color, 
+                     alpha=1,
+                     fill=None,
+                     linewidth=line_width)
+    ax.add_patch(rect)
+
+    return ax, rect
+
+def draw_boxes(box: np.ndarray, color: str = 'white', ax=None, 
+            line_width: float = 0.5) -> tuple[plt.Axes, patches.Rectangle]:
+    """
+    Draws a single bounding box on a given axes object.
+
+    Args:
+        box (np.ndarray): A 1x4 array representing a single bounding box
+                          in [xmin, ymin, xmax, ymax] format.
+        color (str): The color of the box outline.
+        ax (plt.Axes): The matplotlib axes object to draw on.
+        line_width (float): The width of the box outline.
+
+    Returns:
+        A tuple containing the axes object and the created Rectangle patch.
+    """
+    if ax is None:
+        ax = pl.gca()
+
+    num_boxes = len(boxes)
+    all_rects = []
+    for box in boxes:
+        ax, rect = draw_box(box, color=color, ax=ax, line_width=line_width)
+        all_rects.append(rect)
+       
+    return ax, all_rects
+
 def find_matches(D_s, print_assignment: bool = False) -> tuple[list, list]:
     """
     Finds the optimal assignments for a series of cost matrices using the
@@ -215,6 +363,51 @@ def find_matches(D_s, print_assignment: bool = False) -> tuple[list, list]:
         costs.append(total)
         # send back the results in the format we want
     return matches, costs
+
+def f1_score(gt_masks, pred_masks, iou_threshold=0.5):
+    """
+    Calculates the F1 score for a set of ground truth and predicted masks.
+
+    Args:
+        gt_masks (np.ndarray): A boolean or integer array of ground truth masks,
+                               shaped (num_gt_masks, height, width).
+        pred_masks (np.ndarray): A boolean or integer array of predicted masks,
+                                 shaped (num_pred_masks, height, width).
+        iou_threshold (float): The IoU threshold to consider a predicted mask
+                               as a true positive. Default is 0.5.
+
+    Returns:
+        float: The calculated F1 score, a value between 0.0 and 1.0.
+    """
+    if pred_masks.shape[0] == 0 or gt_masks.shape[0] == 0:
+        return 0.0
+    
+    iou_matrix = np.zeros((gt_masks.shape[0], pred_masks.shape[0]))
+    for i, gt_mask in enumerate(gt_masks):
+        for j, pred_mask in enumerate(pred_masks):
+            intersection = np.logical_and(gt_mask, pred_mask).sum()
+            union = np.logical_or(gt_mask, pred_mask).sum()
+            if union > 0:
+                iou_matrix[i, j] = intersection / union
+
+    true_positives = 0
+    matched_preds = set()
+    for i in range(gt_masks.shape[0]):
+        if iou_matrix.shape[1] > 0:
+            best_match_idx = np.argmax(iou_matrix[i, :])
+            if iou_matrix[i, best_match_idx] > iou_threshold:
+                if best_match_idx not in matched_preds:
+                    true_positives += 1
+                    matched_preds.add(best_match_idx)
+    
+    false_positives = pred_masks.shape[0] - len(matched_preds)
+    false_negatives = gt_masks.shape[0] - true_positives
+    
+    precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
+    recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
+    
+    return 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+
 
 def nf_match_neurons_in_binary_masks(masks_gt,
                                      masks_comp,
@@ -406,50 +599,93 @@ def norm_nrg(a_):
     a[indx] = cumEn
     return a.reshape(dims, order='F')
 
-def f1_score(gt_masks, pred_masks, iou_threshold=0.5):
+def plot_volpy_segs(image: np.ndarray,
+    masks: list[dict],
+    min_v: float,
+    max_v: float,
+    outline_color: str,
+    outline_width: float,
+    figsize: tuple[int, int] = (6, 10),
+    title: str = None
+    ):
     """
-    Calculates the F1 score for a set of ground truth and predicted masks.
+    Plots Volpy mask outlines on mean and correlation images.
+
+    The function creates a 2x2 subplot showing the mean image and correlation
+    image, both with and without the segmentation outlines.
 
     Args:
-        gt_masks (np.ndarray): A boolean or integer array of ground truth masks,
-                               shaped (num_gt_masks, height, width).
-        pred_masks (np.ndarray): A boolean or integer array of predicted masks,
-                                 shaped (num_pred_masks, height, width).
-        iou_threshold (float): The IoU threshold to consider a predicted mask
-                               as a true positive. Default is 0.5.
+        image (np.ndarray): The input image data, expected to be a 3D array
+                            where the 3rd dimension contains mean and correlation
+                            images (e.g., image[:,:,1] is mean, image[:,:,2] is corr).
+        masks (List[Dict]): A list of mask dictionaries. Each dictionary must
+                            contain 'all_points_x' and 'all_points_y' keys
+                            representing the vertices of a polygon outline.
+        min_v (float): The minimum percentile for contrast scaling (e.g., 1).
+        max_v (float): The maximum percentile for contrast scaling (e.g., 99).
+        outline_color (str): The color of the mask outlines.
+        outline_width (float): The line width of the mask outlines.
+        figsize (Tuple[int, int]): The size of the figure.
+        title (str, optional): An optional super-title for the entire plot.
+    """
+    f, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2,2, figsize=figsize, sharex=True, sharey=True)  
+
+    # Mean
+    ax1.imshow(image[:,:,1], cmap='gray', 
+               vmin=np.percentile(image[:,:,1], min_v), 
+               vmax=np.percentile(image[:,:,1], max_v));
+    ax1.set_title('Mean Image')
+    ax2.imshow(image[:,:,1], cmap='gray', 
+               vmin=np.percentile(image[:,:,1], min_v), 
+               vmax=np.percentile(image[:,:,1], max_v));
+    for mask in masks:
+        ax2.plot(mask['all_points_x'], 
+                 mask['all_points_y'], 
+                 color=outline_color, 
+                 linewidth=outline_width);
+    ax2.set_title('Mean Image Seg')
+    
+    # Corr
+    ax3.imshow(image[:,:,2], cmap='gray', 
+               vmin=np.percentile(image[:,:,2], min_v), 
+               vmax=np.percentile(image[:,:,2], max_v));
+    ax3.set_title('Corr Image')
+    ax4.imshow(image[:,:,2], cmap='gray', 
+               vmin=np.percentile(image[:,:,2], min_v), 
+               vmax=np.percentile(image[:,:,2], max_v));
+    for mask in masks:
+        ax4.plot(mask['all_points_x'], 
+                 mask['all_points_y'], 
+                 color=outline_color, 
+                 linewidth=outline_width);
+    ax4.set_title('Corr Image Seg')
+
+    if title is not None:
+        plt.suptitle(title, y=0.99, fontsize=16);
+        
+    plt.tight_layout()
+
+def random_colors(N, bright=True):
+    """
+    Generate N visually distinct random colors.
+
+    To achieve this, colors are generated evenly spaced in HSV space
+    and then converted to the RGB color space.
+
+    Args:
+        N (int): The number of colors to generate.
+        bright (bool): If True, generate bright colors. Otherwise, generate darker colors.
 
     Returns:
-        float: The calculated F1 score, a value between 0.0 and 1.0.
+        A list of N colors, where each color is a tuple of (R, G, B) values
+        normalized between 0 and 1.
     """
-    if pred_masks.shape[0] == 0 or gt_masks.shape[0] == 0:
-        return 0.0
-    
-    iou_matrix = np.zeros((gt_masks.shape[0], pred_masks.shape[0]))
-    for i, gt_mask in enumerate(gt_masks):
-        for j, pred_mask in enumerate(pred_masks):
-            intersection = np.logical_and(gt_mask, pred_mask).sum()
-            union = np.logical_or(gt_mask, pred_mask).sum()
-            if union > 0:
-                iou_matrix[i, j] = intersection / union
+    brightness = 1.0 if bright else 0.7
+    hsv = [(i / N, 1, brightness) for i in range(N)]
+    colors = list(map(lambda c: colorsys.hsv_to_rgb(*c), hsv))
+    random.shuffle(colors)
+    return colors
 
-    true_positives = 0
-    matched_preds = set()
-    for i in range(gt_masks.shape[0]):
-        if iou_matrix.shape[1] > 0:
-            best_match_idx = np.argmax(iou_matrix[i, :])
-            if iou_matrix[i, best_match_idx] > iou_threshold:
-                if best_match_idx not in matched_preds:
-                    true_positives += 1
-                    matched_preds.add(best_match_idx)
-    
-    false_positives = pred_masks.shape[0] - len(matched_preds)
-    false_negatives = gt_masks.shape[0] - true_positives
-    
-    precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
-    recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
-    
-    return 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-  
 def vp_load_image(dir, fnames, ind):
     """
     np.load image from directory, given list of fnames, and index   

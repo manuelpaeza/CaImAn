@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 """
 Mask R-CNN
 Base Configurations class.
@@ -23,7 +24,6 @@ class Config:
     STEP_SIZE_DOWN = 7
 
     # Data Loading, Splitting, and Inference
-    # IMAGES_PER_GPU = 2
     RANDOM_SPLIT = False # True for random split, False for fixed split from map below.
     NUM_TEST_RANDOM = 8
     NUM_TORCH_WORKERS = 4 

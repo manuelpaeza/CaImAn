@@ -68,7 +68,6 @@ class MaskedConv2D(nn.Module):
         if self.use_bias:
             nn.init.constant_(self.bias, 0)
 
-        # Replicate the Keras initializers
         if initializer == 'uniform':
             nn.init.uniform_(self.weight, a=0, b=2 / self.mask.sum())
         elif initializer == 'he_normal': # he_normal
@@ -293,6 +292,52 @@ def create_LN_model(Y=None, shape=None, n_channels=2, gSig=5, r_factor=1.5,
                     use_add=True, initializer='uniform', width=5, use_bias=False):
     """ Creates a PyTorch convolutional neural network with ring shape convolutions
     and multiplicative layers.
+    Args:
+        Y: np.array, default: None
+            dataset to be fit, used only if a percentile based initializer is
+            used for the additive layer and can be left to None
+
+        shape: tuple, default: (None, None, 1)
+            dimensions of the FOV. Can be left to its default value
+
+        n_channels: int, default: 2
+            number of convolutional kernels
+
+        gSig: int, default: 5
+            radius of average neuron
+
+        r_factor: float, default: 1.5
+            expansion factor to determine inner radius
+
+        width: int, default: 5
+            width of ring kernel
+
+        use_add: bool, default: True
+            flag for using an additive layer
+
+        initializer: 'uniform' or torch initializer, default: 'uniform'
+            initializer for ring weights. 'uniform' will choose from a non-negative
+            random uniform distribution such that the expected value of the sum
+            is 2.
+
+        lr: float, default: 1e-4
+            (initial) learning rate
+
+        pct: float, default: 10
+            percentile used for initializing additive layer
+ 
+        activation: str or torch initializer, default: 'relu'
+            (nonlinear) activation function 
+
+        loss: str or torch loss function
+            loss function used for training
+
+        use_bias: bool, default: False
+            add a bias term to each convolution kernel
+    Returns:
+        model_LN: torch model compiled and ready to be trained.
+        Optimizer: torch optimizer (updating each step)
+        Criterion: torch loss function 
     """
     if shape is None:
         raise ValueError("The 'shape' argument must be provided for the PyTorch model.")
@@ -315,7 +360,7 @@ def create_NL_model(Y=None, shape=None, n_channels=8, gSig=5, r_factor=1.5,
         shape: tuple, default: (None, None, 1)
             dimensions of the FOV. Can be left to its default value
 
-        n_channels: int, default: 2
+        n_channels: int, default: 8
             number of convolutional kernels
 
         gSig: int, default: 5
@@ -391,11 +436,10 @@ def fit_model(model, Y, optimizer, criterion, patience=5,
     # Prepare data and DataLoaders
     if Y.ndim == 3:
         Y = np.expand_dims(Y, axis=-1)
-    # Transpose to PyTorch format (N, C, H, W)
     Y_tensor = torch.from_numpy(Y.astype(np.float32)).permute(0, 3, 1, 2) 
     dataset = TensorDataset(Y_tensor, Y_tensor)
     
-    # Manually split data for validation, similar to Keras' validation_split
+    # Manually split data for validation
     num_samples = len(dataset)
     val_size = int(val_split * num_samples)
     train_size = num_samples - val_size
@@ -404,10 +448,10 @@ def fit_model(model, Y, optimizer, criterion, patience=5,
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
 
-    # Initialize learning rate scheduler if provided
+    # Initialize learning rate scheduler
     lr_scheduler = schedule(optimizer) if schedule else None
 
-    # Setup for saving the best model, analogous to Keras' ModelCheckpoint
+    # Setup for saving the best model
     run_logdir = get_run_logdir()
     os.makedirs(run_logdir, exist_ok=True)
     path_to_model = os.path.join(run_logdir, 'model.pt')
@@ -416,8 +460,8 @@ def fit_model(model, Y, optimizer, criterion, patience=5,
     epochs_no_improve = 0
     history = {'train_loss': [], 'val_loss': [], 'lr': []}
 
-    # Manual training loop (standard for PyTorch)
-    print(f"Starting training on {device}")  
+    # Training Loop 
+    print(f"Starting Training on {device}")  
     for epoch in range(epochs):
         model.train()
         train_losses = []
@@ -433,7 +477,7 @@ def fit_model(model, Y, optimizer, criterion, patience=5,
 
         avg_train_loss = np.mean(train_losses)
         
-        # Manual validation loop
+        # Validation Loop
         model.eval()
         val_losses = []
         with torch.no_grad():
@@ -452,7 +496,7 @@ def fit_model(model, Y, optimizer, criterion, patience=5,
 
         print(f"Epoch {epoch+1}/{epochs}, Train Loss: {avg_train_loss:.6f}, Val Loss: {avg_val_loss:.6f}, LR: {current_lr:.6f}")
 
-        # Manual implementation of EarlyStopping and saving the best model
+        # Saving the best model
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             epochs_no_improve = 0
@@ -467,6 +511,6 @@ def fit_model(model, Y, optimizer, criterion, patience=5,
         if lr_scheduler:
             lr_scheduler.step()
 
-    print(f"Loading best model weights from {path_to_model}")
+    print(f"Loading model weights from {path_to_model}")
     model.load_state_dict(torch.load(path_to_model, map_location=device))
     return model, history, path_to_model

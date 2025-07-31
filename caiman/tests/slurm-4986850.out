@@ -1,11 +1,0 @@
-Using PyTorch weights from: /mnt/home/mpaez/ceph/volpy_models/mrcnn_epoch_100.pt
-Downloading: "https://download.pytorch.org/models/maskrcnn_resnet50_fpn_v2_coco-73cbd019.pth" to /dev/shm/.cache-mpaez/torch/hub/checkpoints/maskrcnn_resnet50_fpn_v2_coco-73cbd019.pth
-  0%|          | 0.00/177M [00:00<?, ?B/s]  9%|▊         | 15.5M/177M [00:00<00:01, 162MB/s] 19%|█▉        | 33.2M/177M [00:00<00:00, 176MB/s] 30%|██▉       | 52.8M/177M [00:00<00:00, 189MB/s] 40%|████      | 71.6M/177M [00:00<00:00, 192MB/s] 51%|█████     | 90.8M/177M [00:00<00:00, 195MB/s] 62%|██████▏   | 110M/177M [00:00<00:00, 197MB/s]  73%|███████▎  | 129M/177M [00:00<00:00, 198MB/s] 84%|████████▍ | 149M/177M [00:00<00:00, 200MB/s] 95%|█████████▍| 168M/177M [00:00<00:00, 200MB/s]100%|██████████| 177M/177M [00:00<00:00, 195MB/s]
-Your tif file is saved a single pagefile. Performance will be affected
-Inference complete. Found 0 neurons.
-Traceback (most recent call last):
-  File "/var/spool/slurmd/job4986850/slurm_script", line 145, in <module>
-    test_mrcnn_pytorch()
-  File "/var/spool/slurmd/job4986850/slurm_script", line 141, in test_mrcnn_pytorch
-    assert ROIs.shape[0] == 14, f"Test failed: Expected 14 neurons, but found {ROIs.shape[0]}."
-AssertionError: Test failed: Expected 14 neurons, but found 0.

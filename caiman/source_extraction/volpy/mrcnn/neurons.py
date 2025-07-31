@@ -16,6 +16,7 @@ from skimage.color import gray2rgb
 import skimage.draw
 from skimage.draw import polygon2mask
 import torch 
+import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import torchvision
 from torchvision import tv_tensors
@@ -26,11 +27,12 @@ from torchvision.ops.boxes import masks_to_boxes
 from tqdm import tqdm
 from typing import List, Dict, Any
 
-from caiman.source_extraction.volpy.mrcnn.model import get_model_instance_segmentation, mrcnn_inference
-from caiman.source_extraction.volpy.mrcnn.utils import ScaleImage, create_mask, nf_match_neurons_in_binary_masks, normalize_image
+from caiman.source_extraction.volpy.mrcnn.model import get_model_instance_segmentation
+from caiman.source_extraction.volpy.mrcnn.inference import mrcnn_inference 
+from caiman.source_extraction.volpy.mrcnn.utils import ScaleImage, create_mask, data_transform, nf_match_neurons_in_binary_masks, normalize_image
 from caiman.source_extraction.volpy.mrcnn.config import Config
 
-#  Dataset
+# Dataset
 class NeuronsDataset(torch.utils.data.Dataset):
     """
     A PyTorch Dataset for loading neuron images and their corresponding instance segmentation masks.
@@ -124,7 +126,7 @@ class NeuronsDataset(torch.utils.data.Dataset):
         for mask_filename in self.mask_filenames:
             print(mask_filename)
 
-def collate_fn(batch: List[Tuple[Any, Any]]):
+def collate_fn(batch: List[tuple[Any, Any]]):
     """
     Custom collate function for a DataLoader.
 
@@ -142,34 +144,7 @@ def collate_fn(batch: List[Tuple[Any, Any]]):
         and the second element is a tuple of all targets.
     """
     return tuple(zip(*batch))
-
-def data_transform(train: bool = False):
-    """
-    Defines data augmentation and transformation pipelines for object detection.
-
-    Args:
-        train (bool): If True, creates a pipeline with data augmentation
-                      for training. Otherwise, creates a basic pipeline
-                      for validation or testing.
-
-    Returns:
-        T.Compose: A composed torchvision transform object.
-    """
-    transforms = []
-    if train:
-        transforms.append(T.RandomHorizontalFlip(p=0.5))
-        transforms.append(T.RandomVerticalFlip(p=0.5))
-        transforms.append(T.RandomApply([T.RandomRotation(degrees=(-5, 5))], p=0.5))
-        transforms.append(T.ColorJitter(brightness=0.5,
-                                        contrast=0.5,
-                                        saturation=0.5,
-                                        hue=0))
-        transforms.append(T.GaussianBlur(kernel_size=(5, 5), sigma=(0.001, 0.3)))
-        transforms.append(T.SanitizeBoundingBoxes(min_size=2))
-
-    transforms.append(T.ToDtype(torch.float32, scale=False))
-    return T.Compose(transforms)
-
+    
 def train_one_epoch(model: nn.Module, optimizer: torch.optim.Optimizer, data_loader: torch.utils.data.DataLoader,
                     device: torch.device, epoch: int) -> float:
     """
@@ -198,7 +173,8 @@ def train_one_epoch(model: nn.Module, optimizer: torch.optim.Optimizer, data_loa
         optimizer.step()
     return train_epoch_loss / len(data_loader)
 
-def validate(model: nn.Module, data_loader: torch.utils.data.DataLoader, device: torch.device, epoch: int):
+def validate(model: nn.Module, data_loader: torch.utils.data.DataLoader, 
+            device: torch.device, epoch: int):
     """
     Calculates the validation loss for one epoch.
 
@@ -222,7 +198,7 @@ def validate(model: nn.Module, data_loader: torch.utils.data.DataLoader, device:
             val_epoch_loss += losses.item()
     return val_epoch_loss / len(data_loader)
 
-def perform_final_evaluation(model: nn.Module, config: MockConfig, device: torch.device, plot_results: bool = False):
+def perform_final_evaluation(model: nn.Module, config, device: torch.device, plot_results: bool = False):
     """
     Runs inference on the validation set, calculates F1 scores, and reports results.
 
@@ -232,7 +208,7 @@ def perform_final_evaluation(model: nn.Module, config: MockConfig, device: torch
         device (torch.device): The device (CPU/GPU) to run evaluation on.
         plot_results (bool): If True, enables plotting within the matching function.
     """
-    model.eval() Set the model to evaluation mode
+    model.eval() # Set the model to evaluation mode
 
     # Validation Data
     val_indices_path = os.path.join(config.MODEL_SAVE_DIR, 'validation_indices.npy')
