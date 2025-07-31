@@ -25,7 +25,6 @@ import scipy
 import ssl
 import subprocess
 import time
-import torch
 from scipy.ndimage import gaussian_filter
 from tifffile import TiffFile
 from typing import Any, Union, Iterable
@@ -119,9 +118,8 @@ def download_demo(name:str='Sue_2x_3000_40_-46.tif', save_folder:str='') -> str:
 
 
 def download_model(name:str='mask_rcnn', save_folder:str='') -> str:
-    """download a NN model from the file list with the url of its location
-
-
+    """
+    Download a NN model from the file list with the url of its location.
     using urllib, you can add you own name and location in this global parameter
 
         Args:
@@ -137,28 +135,29 @@ def download_model(name:str='mask_rcnn', save_folder:str='') -> str:
     """
     logger = logging.getLogger("caiman")
 
-    file_dict = {'mask_rcnn': 'https://caiman.flatironinstitute.org/~neuro/caiman_downloadables/model/mask_rcnn.pt'}
+    file_dict = {'mask_rcnn': 'https://caiman.flatironinstitute.org/~neuro/caiman_downloadables/model/mask_rcnn_neurons_0040.pt'}
     base_folder = os.path.join(caiman_datadir(), 'model')
     if os.path.exists(base_folder):
         if not os.path.isdir(os.path.join(base_folder, save_folder)):
-            os.makedirs(os.path.join(base_folder, save_folder))
+            os.makedirs(os.path.join(base_folder, save_folder)) 
         path_movie = os.path.join(base_folder, save_folder, name)
+
         if not os.path.exists(path_movie):
             url = file_dict[name]
             logger.info(f"downloading {name} with urllib")
             logger.info(f"GET {url} HTTP/1.1")
+            # Set SSL context for cross-platform compatibility
             if os.name == 'nt':
-                urllib_context = ssl.create_default_context(cafile = certifi.where() ) # On windows we need to avoid the limited default cert store
+                urllib_context = ssl.create_default_context(cafile=certifi.where()) # On Windows, specify the certificate bundle
             else:
-                urllib_context = None # Defaults are fine for Linux and OSX
+                urllib_context = None  # Defaults are sufficient for Linux and macOS
             try:
                 f = urlopen(url, context=urllib_context)
-            except:
+            except Exception:
                 logger.info(f"Trying to set user agent to download demo")
                 from urllib.request import Request
                 req = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                 f = urlopen(req, context=urllib_context)
-
             data = f.read()
             with open(path_movie, "wb") as code:
                 code.write(data)
