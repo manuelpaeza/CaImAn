@@ -14,7 +14,7 @@ import torch
 
 from caiman.source_extraction.volpy.mrcnn.utils import ScaleImage, data_transform
 
-def mrcnn_inference(model, 
+def mrcnn_infer(model, 
                     img, 
                     eval_transform, 
                     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'), 

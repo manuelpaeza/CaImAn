@@ -28,7 +28,7 @@ from tqdm import tqdm
 from typing import List, Dict, Any
 
 from caiman.source_extraction.volpy.mrcnn.model import get_model_instance_segmentation
-from caiman.source_extraction.volpy.mrcnn.inference import mrcnn_inference 
+from caiman.source_extraction.volpy.mrcnn.inference import mrcnn_infer
 from caiman.source_extraction.volpy.mrcnn.utils import ScaleImage, create_mask, data_transform, nf_match_neurons_in_binary_masks, normalize_image
 from caiman.source_extraction.volpy.mrcnn.config import Config
 
@@ -240,7 +240,7 @@ def perform_final_evaluation(model: nn.Module, config, device: torch.device, plo
             data_masks = vp_target['masks']
 
             # Run inference to get predicted masks
-            _, _, binarized_masks = mrcnn_inference(model, img=vp_im.to(device), thresh=config.INFERENCE_THRESHOLD,
+            _, _, binarized_masks = mrcnn_infer(model, img=vp_im.to(device), thresh=config.INFERENCE_THRESHOLD,
                                                     eval_transform=data_transform(train=False), device=device)
 
             # Compare GT and Predicted Masks

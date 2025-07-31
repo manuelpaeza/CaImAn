@@ -93,7 +93,7 @@ def quick_annotation(img, min_radius, max_radius, roughness=2):
 
     return ROIs
 
-def mrcnn_inference(img, size_range, weights_path, display_result=True, confidence_threshold=0.5):
+def mrcnn_inference_pytorch(img, size_range, weights_path, display_result=True):
     """ 
     Mask R-CNN inference in VolPy using PyTorch.
     Args:
@@ -114,71 +114,61 @@ def mrcnn_inference(img, size_range, weights_path, display_result=True, confiden
 
     Returns:
         ROIs: 3-D np.ndarray:
-            A 3-D array of boolean masks representing the detected regions of interest (ROIs)
-            in the format (# of components, height, width).
+            A 3-D array of ROIs (# of components, height, width).
     """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # Setup Configuration and Device
+    class InferenceConfig(Config):
+        GPU_COUNT = 1
+        IMAGES_PER_GPU = 1
+        NUM_CLASSES = 1 + 1  # background + neuron
+        DETECTION_MIN_CONFIDENCE = 0.7 #
+    config = InferenceConfig()
 
-    model = get_model_instance_segmentation(num_classes=2) #One for background, One for neuron
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+
+    #Load Model and weights
+    model = get_model_instance_segmentation(num_classes=config.NUM_CLASSES) 
     model.load_state_dict(torch.load(weights_path, map_location=device))
     model.to(device)
     model.eval() #Set to evaluation mode 
 
-    if img.ndim == 2:
-        img_3_channel = np.stack([img] * 3, axis=-1)
-    else:
-        img_3_channel = img
+    # Pre-process Image
+    img_tensor = torch.from_numpy(img.copy().astype(np.float32)).permute(2, 0, 1) #
+    img_tensor = img_tensor / 255.0  # Normalize to 0-1 range
+    img_tv_tensor = torchvision.tv_tensors.Image(img_tensor)
 
-    eval_transform = data_transform(train=False)
-
-    config = neurons.NeuronsConfig()
-    class InferenceConfig(config.__class__):
-        DETECTION_MIN_CONFIDENCE = 0.7
-    config = InferenceConfig()
-    config.display()
-    model_dir = os.path.join(caiman_datadir(), 'model')
-    model = torchvision.models.detection.maskrcnn_resnet50_fpn(weights='DEFAULT')
-    if weights_path:
-        print(f"Loading custom weights from: {weights_path}")
-        model.load_state_dict(torch.load(weights_path, map_location=device))
-
-    model.to(device)
-    model.eval() # Set model to evaluation mode
-
-    if img.ndim == 2:
-        img_rgb = np.stack([img, img, img], axis=-1)
-    else:
-        img_rgb = img
-
-    eval_transform = data_transform(train=False)
-    
-    binarized_masks, boxes, scores = mrcnn_inference_helper(
-        model,
-        img_3_channel,
-        eval_transform,
-        device,
-        thresh=confidence_threshold
+    # Perform Inference
+    _, _, binarized_masks = mrcnn_infer(
+        model=model,
+        img=img_tv_tensor, 
+        thresh=config.DETECTION_MIN_CONFIDENCE,
+        eval_transform=data_transform(train=False),
+        device=device
     )
 
-    if binarized_masks.size > 0:
-        mask_areas = binarized_masks.sum(axis=(1, 2))
-        size_selection = np.logical_and(mask_areas > size_range[0] ** 2,
-                                        mask_areas < size_range[1] ** 2)
-        
-        ROIs = binarized_masks[size_selection]
-        final_boxes = boxes[size_selection]
-        final_scores = scores[size_selection]
+    # Post-process and Filter by Size
+    if binarized_masks.size == 0:
+        ROIs = np.empty((0, *img.shape[:2]), dtype=bool) #
     else:
-        ROIs, final_boxes, final_scores = np.array([]), np.array([]), np.array([]) 
+        mask_areas = binarized_masks.sum(axis=(1, 2)) #
+        selection = np.logical_and(mask_areas > size_range[0] ** 2,
+                                   mask_areas < size_range[1] ** 2) #
+        ROIs = binarized_masks[selection].astype(bool) 
+
+    print(f"Inference complete. Found {ROIs.shape[0]} neurons.") #
 
     if display_result:
-        _, ax = plt.subplots(1, 1, figsize=(16, 16))
-        final_class_ids = np.ones(ROIs.shape[0], dtype=np.int32) # class IDs (1 for 'neuron') for visualization
-        # (H, W, N) format
-        display_masks = np.transpose(ROIs, (1, 2, 0)) # (H, W, N) format
-        visualize.display_instances(img, final_boxes, display_masks, final_class_ids,
-                                    class_names=['BG', 'neurons'], scores=final_scores,
-                                    ax=ax, title="Predictions")
+        plt.figure(figsize=(12, 12))
+        plt.imshow(img)
+        # Overlay each ROI with a distinct color
+        if ROIs.any():
+            composite_mask = np.zeros_like(ROIs[0], dtype=float)
+            for i, roi in enumerate(ROIs):
+                composite_mask += roi * (i + 1)
+            plt.imshow(np.ma.masked_where(composite_mask == 0, composite_mask), cmap='nipy_spectral', alpha=0.6)
+        plt.title(f"PyTorch Predictions ({len(ROIs)} ROIs found)")
+        plt.axis('off')
         plt.show()
 
     return ROIs
