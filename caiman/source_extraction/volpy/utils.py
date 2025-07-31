@@ -11,11 +11,13 @@ from matplotlib.widgets import Slider
 import numpy as np
 import os
 import torch
-import torchvision 
-from torchvision.transforms import functional as F
+import torchvision
 import caiman as cm
 from caiman.external.cell_magic_wand import cell_magic_wand_single_point
 from caiman.paths import caiman_datadir
+
+from caiman.source_extraction.volpy.mrcnn import utils
+from caiman.source_extraction.volpy.mrcnn.model import get_model_instance_segmentation
 
 def quick_annotation(img, min_radius, max_radius, roughness=2):
     """ Quick annotation method in VolPy using cell magic wand plugin
@@ -91,36 +93,50 @@ def quick_annotation(img, min_radius, max_radius, roughness=2):
 
     return ROIs
 
-def mrcnn_inference(img, size_range, weights_path, display_result=True):
-    """ Mask R-CNN inference in VolPy
-    Args: 
-        img: 2-D array
-            summary images for detection
+def mrcnn_inference(img, size_range, weights_path, display_result=True, confidence_threshold=0.5):
+    """ 
+    Mask R-CNN inference in VolPy using PyTorch.
+    Args:
+        img (np.ndarray):
+            2-D or 3-D summary image for detection. If 2D, it's converted to 3-channel.
+
+        size_range (list):
+            Range of neuron size [min, max] for selection.
+
+        weights_path (str):
+            Path for the PyTorch Mask R-CNN weights file (.pt).
+
+        display_result (bool):
+            If True, the function will plot the result of the inference.
             
-        size_range: list
-            range of neuron size for selection
-            
-        weights_path: str
-            path for Mask R-CNN weight
-            
-        display_result: boolean
-            if True, the function will plot the result of inference
-        
-    Return:
-        ROIs: 3-D array
-            region of interests 
-            (# of components * # of pixels in x dim * # of pixels in y dim)
+        confidence_threshold (float):
+            The confidence threshold for accepting detected instances.
+
+    Returns:
+        ROIs: 3-D np.ndarray:
+            A 3-D array of boolean masks representing the detected regions of interest (ROIs)
+            in the format (# of components, height, width).
     """
-    from caiman.source_extraction.volpy.mrcnn import visualize, neurons
-    import caiman.source_extraction.volpy.mrcnn.model as modellib
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    model = get_model_instance_segmentation(num_classes=2) #One for background, One for neuron
+    model.load_state_dict(torch.load(weights_path, map_location=device))
+    model.to(device)
+    model.eval() #Set to evaluation mode 
+
+    if img.ndim == 2:
+        img_3_channel = np.stack([img] * 3, axis=-1)
+    else:
+        img_3_channel = img
+
+    eval_transform = data_transform(train=False)
+
     config = neurons.NeuronsConfig()
     class InferenceConfig(config.__class__):
         DETECTION_MIN_CONFIDENCE = 0.7
     config = InferenceConfig()
     config.display()
     model_dir = os.path.join(caiman_datadir(), 'model')
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
     model = torchvision.models.detection.maskrcnn_resnet50_fpn(weights='DEFAULT')
     if weights_path:
         print(f"Loading custom weights from: {weights_path}")
@@ -134,28 +150,37 @@ def mrcnn_inference(img, size_range, weights_path, display_result=True):
     else:
         img_rgb = img
 
-    # Convert to tensor and normalize
-    input_tensor = F.to_tensor(img_rgb).to(device)
+    eval_transform = data_transform(train=False)
+    
+    binarized_masks, boxes, scores = mrcnn_inference_helper(
+        model,
+        img_3_channel,
+        eval_transform,
+        device,
+        thresh=confidence_threshold
+    )
 
-    # Perform inference
-    with torch.no_grad():
-        predictions = model([input_tensor])
-
-    results = model.detect([img], verbose=1)
-    r = results[0]
-    selection = np.logical_and(r['masks'].sum(axis=(0,1)) > size_range[0] ** 2, 
-                               r['masks'].sum(axis=(0,1)) < size_range[1] ** 2)
-    r['rois'] = r['rois'][selection]
-    r['masks'] = r['masks'][:, :, selection]
-    r['class_ids'] = r['class_ids'][selection]
-    r['scores'] = r['scores'][selection]
-    ROIs = r['masks'].transpose([2, 0, 1])
+    if binarized_masks.size > 0:
+        mask_areas = binarized_masks.sum(axis=(1, 2))
+        size_selection = np.logical_and(mask_areas > size_range[0] ** 2,
+                                        mask_areas < size_range[1] ** 2)
+        
+        ROIs = binarized_masks[size_selection]
+        final_boxes = boxes[size_selection]
+        final_scores = scores[size_selection]
+    else:
+        ROIs, final_boxes, final_scores = np.array([]), np.array([]), np.array([]) 
 
     if display_result:
-        _, ax = plt.subplots(1,1, figsize=(16,16))
-        visualize.display_instances(img, r['rois'], r['masks'], r['class_ids'], 
-                                ['BG', 'neurons'], r['scores'], ax=ax,
-                                title="Predictions")        
+        _, ax = plt.subplots(1, 1, figsize=(16, 16))
+        final_class_ids = np.ones(ROIs.shape[0], dtype=np.int32) # class IDs (1 for 'neuron') for visualization
+        # (H, W, N) format
+        display_masks = np.transpose(ROIs, (1, 2, 0)) # (H, W, N) format
+        visualize.display_instances(img, final_boxes, display_masks, final_class_ids,
+                                    class_names=['BG', 'neurons'], scores=final_scores,
+                                    ax=ax, title="Predictions")
+        plt.show()
+
     return ROIs
 
 def reconstructed_movie(estimates, fnames, idx, scope, flip_signal):

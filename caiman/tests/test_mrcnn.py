@@ -30,7 +30,6 @@ def mrcnn_pytorch(model, img, size_range, confidence_threshold=0.5):
     img_tensor = ScaleImage()(img_tensor) # Apply the same 0-1 scaling used during training
     img_tv_tensor = torchvision.tv_tensors.Image(img_tensor) # Wrap the tensor in the tv_tensors.Image class
 
-    # Perform inference using the existing function
     _, _, binarized_masks = mrcnn_inference(
         model,
         img=img_tv_tensor, 
@@ -52,35 +51,6 @@ def mrcnn_pytorch(model, img, size_range, confidence_threshold=0.5):
     filtered_masks = binarized_masks[selection]
     return filtered_masks.astype(bool)
 
-# def mrcnn(img, size_range, weights_path, confidence_threshold):
-#    config = neurons.NeuronsConfig()
-#    
-#    class InferenceConfig(config.__class__):
-#        # Run detection on one img at a time
-#        GPU_COUNT = 1
-#        IMAGES_PER_GPU = 1
-#        DETECTION_MIN_CONFIDENCE = 0.7
-#        IMAGE_RESIZE_MODE = "pad64"
-#        IMAGE_MAX_DIM = 512
-#        RPN_NMS_THRESHOLD = 0.7
-#        POST_NMS_ROIS_INFERENCE = 1000
-#
-#    config = InferenceConfig()
-#    config.display()
-#    model_dir = os.path.join(caiman_datadir(), 'model')
-#    
-#    with tf.device(DEVICE):
-#        model = modellib.MaskRCNN(mode="inference", model_dir=model_dir,
-#                                  config=config)
-#        tf.keras.Model.load_weights(model.keras_model, weights_path, by_name=True)
-#        results = model.detect([img], verbose=1)
-#        r = results[0]
-#        selection = np.logical_and(r['masks'].sum(axis=(0,1)) > size_range[0] ** 2, 
-#                                   r['masks'].sum(axis=(0,1)) < size_range[1] ** 2)
-#        r['masks'] = r['masks'][:, :, selection]
-#        ROIs = r['masks'].transpose([2, 0, 1])   
-#    return ROIs
-
 def test_mrcnn_pytorch():
     """
     Test function for the PyTorch Mask R-CNN neuron detector.
@@ -93,6 +63,8 @@ def test_mrcnn_pytorch():
         raise FileNotFoundError(f"PyTorch model weights not found at: {weights_path}\n"
                               "Please run the training script first.")
     print(f"Using PyTorch weights from: {weights_path}")
+
+    #Note: should use weights_path = download_model('mask_rcnn') 
 
     # Load the model architecture and state
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
