@@ -24,6 +24,7 @@ dependencies = [
   "ipython",
   "ipyparallel",
   "ipywidgets",
+  "keras",
   "matplotlib",
   "moviepy",
   "mypy",
