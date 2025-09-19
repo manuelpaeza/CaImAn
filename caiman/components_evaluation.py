@@ -305,7 +305,8 @@ def evaluate_components_CNN(A,
 
     # Pass the preprocessed image crops through the model to get predictions
     with torch.no_grad():
-        predictions = loaded_model(final_crops)
+        predictions = loaded_model(final_crops) #raw output
+        predictions = torch.nn.functional.softmax(predictions, dim=-1) #softmax to get probabilities
 
     predictions_numpy = predictions.cpu().numpy()
     return predictions_numpy, final_crops
