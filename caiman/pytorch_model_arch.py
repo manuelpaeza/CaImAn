@@ -29,8 +29,6 @@ class PyTorchCNN(nn.Module):
         self.fc1 = nn.Linear(in_features=6400, out_features=512)
         self.dropout3 = nn.Dropout(p=0.5)
         self.fc2 = nn.Linear(in_features=512, out_features=2)
-        
-        self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x):
         # Convolutional Block 1 
@@ -50,7 +48,6 @@ class PyTorchCNN(nn.Module):
         x = F.relu(self.fc1(x))
         x = self.dropout3(x)
         x = self.fc2(x)
-        x = self.softmax(x) 
+        x = F.softmax(x, dim=-1)
         return x  
-        #return F.softmax(x, dim=1)
         

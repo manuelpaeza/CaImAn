@@ -289,6 +289,8 @@ def evaluate_components_CNN(A,
 
         logger.debug("Loaded model from disk")
 
+    loaded_model.eval()
+
     half_crop = np.minimum(gSig[0] * 4 + 1, patch_size), np.minimum(gSig[1] * 4 + 1, patch_size)
     dims = np.array(dims)
     coms = [scipy.ndimage.center_of_mass(mm.toarray().reshape(dims, order='F')) for mm in A.tocsc().T]
