@@ -21,8 +21,9 @@ class Config:
     ))
     MODEL_SAVE_DIR = os.path.expanduser(os.environ.get(
         "CAIMAN_VOLPY_MODEL_DIR",
-        os.path.join(caiman_datadir(), "model"),
+        os.path.join(caiman_datadir(), "model", "cai-pytorch-6"),
     ))
+    ALLOW_OVERWRITE = False
 
     # Model and Training Hyperparameters
     NUM_CLASSES = 1 + 1  # Background + Neuron

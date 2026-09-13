@@ -11,6 +11,7 @@ Revised by Eric Thompson, Changjia Cai, and Manuel Paez
 
 import matplotlib.pyplot as plt
 import os
+import tempfile
 import numpy as np
 from skimage.color import gray2rgb
 import torch 
@@ -37,6 +38,45 @@ from caiman.source_extraction.volpy.mrcnn.utils import (
     normalize_image,
     prepare_mrcnn_image,
 )
+
+
+def _atomic_torch_save(value, path):
+    """Write a torch artifact atomically so interrupted writes do not replace a good file."""
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    fd, temporary_path = tempfile.mkstemp(
+        prefix=f'.{os.path.basename(path)}.', suffix='.tmp', dir=directory
+    )
+    os.close(fd)
+    try:
+        torch.save(value, temporary_path)
+        os.replace(temporary_path, path)
+    finally:
+        if os.path.exists(temporary_path):
+            os.remove(temporary_path)
+
+
+def _check_output_directory(path, allow_overwrite=False):
+    """Create a writable output directory and protect existing training artifacts."""
+    os.makedirs(path, exist_ok=True)
+    artifact_names = {
+        'mrcnn_latest.pt',
+        'validation_indices.npy',
+        'volpy_train_history.pt',
+    }
+    existing_artifacts = sorted(
+        name for name in os.listdir(path)
+        if name in artifact_names or (name.startswith('mrcnn_epoch_') and name.endswith('.pt'))
+    )
+    if existing_artifacts and not allow_overwrite:
+        raise FileExistsError(
+            f"Training artifacts already exist in {os.path.abspath(path)}: "
+            f"{existing_artifacts}. Choose a new MODEL_SAVE_DIR or set "
+            "config.ALLOW_OVERWRITE = True explicitly."
+        )
+    fd, probe_path = tempfile.mkstemp(prefix='.volpy-write-test-', dir=path)
+    os.close(fd)
+    os.remove(probe_path)
 
 # Dataset
 class NeuronsDataset(torch.utils.data.Dataset):
@@ -288,9 +328,16 @@ def perform_final_evaluation(model: nn.Module, config, device: torch.device, plo
 
 def train_validate(config, plot_results=False):
     """ Main function to run the training and validation pipeline."""
-    os.makedirs(config.MODEL_SAVE_DIR, exist_ok=True)
+    if config.NUM_EPOCHS < 1:
+        raise ValueError("NUM_EPOCHS must be at least 1")
+    if config.SAVE_FREQ < 1:
+        raise ValueError("SAVE_FREQ must be at least 1")
+    _check_output_directory(
+        config.MODEL_SAVE_DIR, getattr(config, 'ALLOW_OVERWRITE', False)
+    )
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
+    print(f"Saving training artifacts to: {os.path.abspath(config.MODEL_SAVE_DIR)}")
 
     np.random.seed(config.RANDOM_SEED)
     torch.manual_seed(config.RANDOM_SEED)
@@ -310,7 +357,9 @@ def train_validate(config, plot_results=False):
         val_indices = [idx for region, inds in config.DATASET_REGION_MAP.items() if region != 'Train' for idx in inds]
     
     val_indices_path = os.path.join(config.MODEL_SAVE_DIR, 'validation_indices.npy')
-    np.save(val_indices_path, val_indices)
+    temporary_indices_path = f'{val_indices_path}.tmp.npy'
+    np.save(temporary_indices_path, val_indices)
+    os.replace(temporary_indices_path, val_indices_path)
     print(f"Validation indices for this run have been saved to {val_indices_path}")
 
     dataset_train = torch.utils.data.Subset(dataset_train, train_indices)
@@ -347,6 +396,8 @@ def train_validate(config, plot_results=False):
                             mode="triangular2")
 
     all_train_losses, all_val_losses, all_lrs = [], [], []
+    history_path = os.path.join(config.MODEL_SAVE_DIR, 'volpy_train_history.pt')
+    latest_path = os.path.join(config.MODEL_SAVE_DIR, 'mrcnn_latest.pt')
     print(f"**TRAIN {config.NUM_EPOCHS} epochs. PRINT every {config.PRINT_FREQ} epoch(s). "
           f"SAVE every {config.SAVE_FREQ} epoch(s).**")
 
@@ -364,22 +415,31 @@ def train_validate(config, plot_results=False):
         if (epoch + 1) % config.PRINT_FREQ == 0:
             print(f"Epoch {epoch+1}/{config.NUM_EPOCHS} | Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, LR: {current_lr:.6f}")
 
-        if (epoch + 1) % config.SAVE_FREQ == 0:
+        completed_epoch = epoch + 1
+        history = {'train_loss': all_train_losses, 'val_loss': all_val_losses, 'lr': all_lrs}
+        checkpoint = {
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': lr_scheduler.state_dict(),
+            'epoch': completed_epoch,
+            'config': config.to_dict(),
+            'torch_version': str(torch.__version__),
+            'torchvision_version': str(torchvision.__version__),
+            'train_indices': train_indices,
+            'validation_indices': val_indices,
+            'history': history,
+        }
+        _atomic_torch_save(checkpoint, latest_path)
+        _atomic_torch_save(history, history_path)
+        print(f"\tLatest checkpoint saved to {latest_path}")
+
+        if completed_epoch % config.SAVE_FREQ == 0 or completed_epoch == config.NUM_EPOCHS:
             model_path = os.path.join(config.MODEL_SAVE_DIR, f'mrcnn_epoch_{epoch+1}.pt')
-            torch.save({
-                'model_state_dict': model.state_dict(),
-                'epoch': epoch + 1,
-                'config': config.to_dict(),
-                'torch_version': str(torch.__version__),
-                'torchvision_version': str(torchvision.__version__),
-                'train_indices': train_indices,
-                'validation_indices': val_indices,
-            }, model_path)
+            _atomic_torch_save(checkpoint, model_path)
             print(f"\tModel saved to {model_path}")
 
     history = {'train_loss': all_train_losses, 'val_loss': all_val_losses, 'lr': all_lrs}
-    torch.save(history, os.path.join(config.MODEL_SAVE_DIR, 'volpy_train_history.pt'))
-    print("\nDONE!")
+    print(f"\nDONE! Final checkpoint: {model_path}")
 
     if plot_results:
         plt.figure(figsize=(12, 5))

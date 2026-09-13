@@ -9,7 +9,11 @@ from caiman.source_extraction.volpy.mrcnn.model import (
     mrcnn_inference,
     thresholded_predictions,
 )
-from caiman.source_extraction.volpy.mrcnn.neurons import validate
+from caiman.source_extraction.volpy.mrcnn.neurons import (
+    _atomic_torch_save,
+    _check_output_directory,
+    validate,
+)
 from caiman.source_extraction.volpy.mrcnn.utils import prepare_mrcnn_image
 from caiman.utils.utils import download_demo, download_model
 
@@ -71,6 +75,25 @@ def test_validation_does_not_update_batch_norm_statistics():
     data_loader = [([torch.ones((1, 2, 2))], [{}])]
     validate(model, data_loader, torch.device('cpu'), epoch=0)
     assert torch.equal(model.batch_norm.running_mean, running_mean)
+
+
+def test_atomic_torch_save_replaces_artifact(tmp_path):
+    artifact_path = tmp_path / 'checkpoint.pt'
+    _atomic_torch_save({'epoch': 1}, artifact_path)
+    _atomic_torch_save({'epoch': 2}, artifact_path)
+
+    assert torch.load(artifact_path, weights_only=True) == {'epoch': 2}
+    assert list(tmp_path.iterdir()) == [artifact_path]
+
+
+def test_training_output_directory_protects_existing_artifacts(tmp_path):
+    artifact_path = tmp_path / 'mrcnn_epoch_1.pt'
+    artifact_path.touch()
+
+    with np.testing.assert_raises(FileExistsError):
+        _check_output_directory(tmp_path)
+
+    _check_output_directory(tmp_path, allow_overwrite=True)
 
 
 def test_mrcnn_pytorch_demo_inference():
