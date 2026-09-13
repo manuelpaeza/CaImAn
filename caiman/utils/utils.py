@@ -138,16 +138,21 @@ def download_model(name:str='mask_rcnn', save_folder:str='') -> str:
     """
     logger = logging.getLogger("caiman")
 
-    file_dict = {'mask_rcnn': 'https://caiman.flatironinstitute.org/~neuro/caiman_downloadables/model/mrcnn_epoch_100.pt'}
+    file_dict = {
+        'mask_rcnn': (
+            'mrcnn_epoch_200.pt',
+            'https://caiman.flatironinstitute.org/~neuro/caiman_downloadables/model/mrcnn_epoch_200.pt',
+        ),
+    }
+    filename, url = file_dict[name]
     base_folder = os.path.join(caiman_datadir(), 'model')
     if os.path.exists(base_folder):
         if not os.path.isdir(os.path.join(base_folder, save_folder)):
             os.makedirs(os.path.join(base_folder, save_folder)) 
-        path_movie = os.path.join(base_folder, save_folder, name)
+        path_movie = os.path.join(base_folder, save_folder, filename)
 
         if not os.path.exists(path_movie):
-            url = file_dict[name]
-            logger.info(f"downloading {name} with urllib")
+            logger.info(f"downloading {filename} with urllib")
             logger.info(f"GET {url} HTTP/1.1")
             # Set SSL context for cross-platform compatibility
             if os.name == 'nt':
@@ -165,7 +170,7 @@ def download_model(name:str='mask_rcnn', save_folder:str='') -> str:
             with open(path_movie, "wb") as code:
                 code.write(data)
         else:
-            logger.info("File " + str(name) + " already downloaded")
+            logger.info("File " + filename + " already downloaded")
     else:
         raise Exception('Cannot find the model folder in your caiman_datadir - did you make one with caimanmanager?')
     return path_movie

@@ -20,7 +20,7 @@ from scipy.optimize import linear_sum_assignment
 from skimage.draw import polygon2mask
 import time 
 import torch
-from torchvision.transforms.v2 import functional as F
+from torchvision import tv_tensors
 import torchvision.transforms.v2 as T
 from typing import Any, Optional
 
@@ -32,9 +32,27 @@ class ScaleImage:
     Scale image so it is between 0-1: works on floats only
     """
     def __call__(self, img):
+        img = img.to(torch.float32)
         min_val, max_val = img.min(), img.max()
-        range = max_val - min_val
-        return F.normalize_image(img, mean=[min_val, min_val, min_val], std=[range, range, range])  
+        value_range = max_val - min_val
+        if value_range == 0:
+            return torch.zeros_like(img)
+        return (img - min_val) / value_range
+
+
+def prepare_mrcnn_image(img):
+    """Convert an HxW or HxWx3 summary image to a normalized CHW tensor."""
+    img = np.asarray(img)
+    if img.ndim == 2:
+        img = np.repeat(img[..., None], 3, axis=-1)
+    elif img.ndim == 3 and img.shape[-1] == 1:
+        img = np.repeat(img, 3, axis=-1)
+
+    if img.ndim != 3 or img.shape[-1] != 3:
+        raise ValueError(f"Expected an HxW or HxWx3 image, got shape {img.shape}")
+
+    image = torch.from_numpy(np.array(img, dtype=np.float32, copy=True)).permute(2, 0, 1)
+    return tv_tensors.Image(ScaleImage()(image))
 
 def bounding_box(mask_coords):
     """
@@ -129,7 +147,8 @@ def data_transform(train: bool = False):
         transforms.append(T.GaussianBlur(kernel_size=(5, 5), sigma=(0.001, 0.3)))
         transforms.append(T.SanitizeBoundingBoxes(min_size=2))
 
-    transforms.append(T.ToDtype(torch.float32, scale=False))
+    transforms.append(T.ToDtype(torch.float32, scale=True))
+    transforms.append(T.ToPureTensor())
     return T.Compose(transforms)
 
 
