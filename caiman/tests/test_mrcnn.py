@@ -96,6 +96,15 @@ def test_training_output_directory_protects_existing_artifacts(tmp_path):
     _check_output_directory(tmp_path, allow_overwrite=True)
 
 
+def test_training_output_directory_only_blocks_planned_epochs(tmp_path):
+    (tmp_path / 'mrcnn_epoch_200.pt').touch()
+    _check_output_directory(tmp_path, num_epochs=100, save_freq=5)
+
+    (tmp_path / 'mrcnn_epoch_100.pt').touch()
+    with np.testing.assert_raises(FileExistsError):
+        _check_output_directory(tmp_path, num_epochs=100, save_freq=5)
+
+
 def test_mrcnn_pytorch_demo_inference():
     weights_path = download_model('mask_rcnn')
     summary_images = cm.load(download_demo('demo_voltage_imaging_summary_images.tif'))

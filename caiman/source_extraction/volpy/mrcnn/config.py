@@ -21,7 +21,7 @@ class Config:
     ))
     MODEL_SAVE_DIR = os.path.expanduser(os.environ.get(
         "CAIMAN_VOLPY_MODEL_DIR",
-        os.path.join(caiman_datadir(), "model", "cai-pytorch-7"),
+        os.path.join(caiman_datadir(), "model"),
     ))
     ALLOW_OVERWRITE = False
 

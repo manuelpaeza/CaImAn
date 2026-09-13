@@ -56,7 +56,7 @@ def _atomic_torch_save(value, path):
             os.remove(temporary_path)
 
 
-def _check_output_directory(path, allow_overwrite=False):
+def _check_output_directory(path, allow_overwrite=False, num_epochs=None, save_freq=None):
     """Create a writable output directory and protect existing training artifacts."""
     os.makedirs(path, exist_ok=True)
     artifact_names = {
@@ -64,10 +64,20 @@ def _check_output_directory(path, allow_overwrite=False):
         'validation_indices.npy',
         'volpy_train_history.pt',
     }
-    existing_artifacts = sorted(
-        name for name in os.listdir(path)
-        if name in artifact_names or (name.startswith('mrcnn_epoch_') and name.endswith('.pt'))
-    )
+    if num_epochs is not None:
+        if save_freq is None or num_epochs < 1 or save_freq < 1:
+            raise ValueError("num_epochs and save_freq must both be positive")
+        artifact_names.update(
+            f'mrcnn_epoch_{epoch}.pt'
+            for epoch in range(save_freq, num_epochs + 1, save_freq)
+        )
+        artifact_names.add(f'mrcnn_epoch_{num_epochs}.pt')
+        existing_artifacts = sorted(artifact_names.intersection(os.listdir(path)))
+    else:
+        existing_artifacts = sorted(
+            name for name in os.listdir(path)
+            if name in artifact_names or (name.startswith('mrcnn_epoch_') and name.endswith('.pt'))
+        )
     if existing_artifacts and not allow_overwrite:
         raise FileExistsError(
             f"Training artifacts already exist in {os.path.abspath(path)}: "
@@ -333,7 +343,10 @@ def train_validate(config, plot_results=False):
     if config.SAVE_FREQ < 1:
         raise ValueError("SAVE_FREQ must be at least 1")
     _check_output_directory(
-        config.MODEL_SAVE_DIR, getattr(config, 'ALLOW_OVERWRITE', False)
+        config.MODEL_SAVE_DIR,
+        getattr(config, 'ALLOW_OVERWRITE', False),
+        num_epochs=config.NUM_EPOCHS,
+        save_freq=config.SAVE_FREQ,
     )
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
