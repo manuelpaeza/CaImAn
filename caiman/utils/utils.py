@@ -138,12 +138,17 @@ def download_model(name:str='mask_rcnn', save_folder:str='') -> str:
     """
     logger = logging.getLogger("caiman")
 
-    file_dict = {
-        'mask_rcnn': (
-            'mrcnn_epoch_200.pt',
-            'https://caiman.flatironinstitute.org/~neuro/caiman_downloadables/model/mrcnn_epoch_200.pt',
-        ),
-    }
+	file_dict = {
+    'mask_rcnn': (
+        'mrcnn_epoch_100.pt',
+        'https://users.flatironinstitute.org/~neuro/caiman_downloadables/model/mrcnn_epoch_100.pt',
+    ),
+    'mask_rcnn_v2': (
+        'mrcnn_epoch_200.pt',
+        'https://users.flatironinstitute.org/~neuro/caiman_downloadables/model/mrcnn_epoch_200.pt',
+    ),
+	}
+filename, url = file_dict[name]
     filename, url = file_dict[name]
     base_folder = os.path.join(caiman_datadir(), 'model')
     if os.path.exists(base_folder):
